@@ -43,7 +43,10 @@ Data defaults to `/data/users/jianchen/data/CHBMIT`, caches to
 Existing numeric caches written with Python 2 / hickle 2.1.0 are supported;
 re-downloading or rebuilding them is unnecessary. Raw data is mounted read-only.
 The script runs under your user ID and preserves checkpoints, predictions,
-training history, and metrics on the host. See [Docker instructions](docker/README.md).
+training history, and metrics on the host. Override paths with `DATA_DIR`,
+`CACHE_DIR`, and `OUTPUT_DIR`; use `IMAGE_NAME` to select a different image.
+The script forwards signals with `--init` and provides 1 GiB of shared memory
+for optional DataLoader workers.
 
 ## Local execution
 
@@ -77,21 +80,5 @@ Use `--reuse-checkpoint` to evaluate existing PyTorch weights instead of fitting
 PyTorch checkpoints use `.pt`; legacy Keras `.h5` model weights are not loaded.
 Predictions retain the original CSV headers and four-decimal formatting.
 Cross-validation checkpoints include fold numbers, and all checkpoints persist.
-
-## Validation
-
-```bash
-python -m pip install -r requirements-dev.txt
-python -m pytest -q tests
-python docker/smoke_test.py --device cpu
-python docker/smoke_test.py --device cuda \
-  --cache-dir /data/users/jianchen/data/CHBMIT-cache \
-  --data-dir /data/users/jianchen/data/CHBMIT
-```
-
-The Docker build runs CPU tests. The CUDA smoke test performs training using real
-cached CHBMIT samples, saves a checkpoint, reloads it on CPU, and checks predictions.
-The test suite covers electrode-axis normalization, SAME pooling, dataset shapes,
-checkpoint round trips, old/new cache formats, and seizure split behavior.
 
 Official installation reference: [PyTorch 2.5.1 builds](https://pytorch.org/get-started/previous-versions/#v251).

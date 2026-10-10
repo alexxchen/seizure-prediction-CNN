@@ -1,4 +1,0 @@
-# The base image supplies the CUDA build of the pinned PyTorch version.
--r requirements.txt
-# Replace the base image's conda wheel metadata with a supported pip wheel.
-ninja==1.11.1.3
