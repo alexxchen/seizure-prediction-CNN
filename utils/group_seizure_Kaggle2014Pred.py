@@ -12,8 +12,8 @@ def group_seizure(X, y, sequences):
     Xg = []
     yg = []
     start_indices = get_start_indices(sequences)
-    print ('start_indices', start_indices)
-    print (len(X), len(y))
+    print(('start_indices', start_indices))
+    print((len(X), len(y)))
     for i in range(len(start_indices)-1):
         Xg.append(
             np.concatenate(X[start_indices[i]:start_indices[i+1]], axis=0)
