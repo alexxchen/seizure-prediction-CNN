@@ -1,45 +1,62 @@
 # autoresearch
 
-An AI agent improves MouseLFP seizure prediction by changing code, running experiments, and retaining better validation results. Use English throughout the project.
+An LLM conducts its own research on how private continuous MouseLFP recordings and seizure annotations become inputs to the existing CNN.
 
 ## Setup
 
-When the user requests research:
+When the user requests experiments, set up the research session:
 
-1. **Choose a run tag:** use a fresh tag for a new study; reuse the existing session when resuming.
-2. **Create the branch:** use `autoresearch/<tag>`. Inspect git status and protect existing user changes.
-3. **Read the project:** `README.md` gives context; `prepare.py`, `research_protocol.py`, and `protocol.lock.json` define the fixed data protocol; `evaluate.py` defines scoring; `train.py` and `models/*.py` contain the editable recipe.
-4. **Verify data exists:** the default prepared dataset is `/data/users/jianchen/data/seizure_data-cache/autoresearch-raw-v1`. Check for `manifest.json` and all seven mouse directories. Run `./run_research.sh prepare` if preparation is needed.
-5. **Select the session:** set `OUTPUT_DIR`, for example `export OUTPUT_DIR="$PWD/autoresearch-runs/<tag>"`. The evaluator creates `session.json` and `results.tsv`. Preserve existing records when resuming. Earlier AUC-based sessions stay archived; create a new session for accuracy-based comparisons.
-6. **Run the baseline:** use the initial recipe before making changes. In an existing session, read `best.json` and restore the best recipe before continuing.
-
-Documentation edits and project checks leave the research loop inactive.
+1. **Choose a run tag**: use a date-based tag, such as `oct13-data`. For a fresh run, both `autoresearch/<tag>` and `autoresearch-runs/<tag>` must be unused. Resume an existing data-pipeline session only when its scope, sources, controls, and runtime match. Keep earlier window-cache and model-search sessions archived.
+2. **Create the branch**: inspect the branch and working tree, protect existing user changes, then use `git checkout -b autoresearch/<tag>` from the current project state. Preserve unrelated work and previous experiment records.
+3. **Read the in-scope files**: read these files before choosing a hypothesis:
+   - `README.md` and `AGENTS.md` — project context and research rules.
+   - `prepare.py` and `source_data.py` — fixed source inventory, annotation alignment, recording access, and day splits.
+   - `sample_pipeline.py` — editable event eligibility, sample construction, exclusions, window policy, negative selection, and cleaning.
+   - `input_pipeline.py` — editable resampling, features, normalization, frequency selection, and input layout.
+   - `train.py`, `models/cnn.py`, and `models/__init__.py` — fixed CNN and training controls.
+   - `evaluate.py`, `protocol.lock.json`, and `SETTINGS_MouseLFP.json` — fixed evaluation, source identity, snapshots, and session management.
+4. **Verify data exists**: check the recordings under `/data/users/jianchen/data/seizure_data` and the manifest under `/data/users/jianchen/data/seizure_data-cache/autoresearch-source-v1`. Run `./run_research.sh prepare` if preparation is needed.
+5. **Initialize the results location**: set `OUTPUT_DIR="$PWD/autoresearch-runs/<tag>"`. The evaluator creates `session.json` and initializes `results.tsv` when the first experiment runs. Preserve the ledger when resuming; inspect `best.json` and use `./run_research.sh restore` before continuing an existing session.
+6. **Begin the requested research**: verify setup, report the selected session, and establish the baseline. The user's request to run experiments authorizes the loop without another routine confirmation. Documentation edits and project inspections leave training inactive.
 
 ## Experimentation
 
-Run each experiment on a single GPU:
+Use one GPU for each experiment. The evaluator trains seven mice sequentially, with a **300-second training allowance per mouse** and a fixed 100-epoch cap. Data assembly and feature construction precede the training timer; validation and checkpoint work during training count toward the allowance. Launch a candidate with:
 
 ```bash
-./run_research.sh experiment --description 'baseline' > run.log 2>&1
+./run_research.sh experiment --description 'baseline shared data recipe' > run.log 2>&1
 ```
 
-The budget is **300 seconds per mouse**, training seven separate models. Startup, preprocessing, and evaluation add overhead. The initial recipe also stops at 100 epochs. Keep the budget, seed, subjects, data identity, and runtime versions fixed within a session.
+**What you CAN do:**
 
-**You may change:** `train.py` and `models/*.py`, including preprocessing, architecture, optimizer, losses, regularization, batch size, precision, and the training loop. Dependencies and Docker recipes are editable; environment changes require a new session and matching baseline.
+- Edit `sample_pipeline.py` and `input_pipeline.py`. Explore event eligibility, positive and negative definitions, prediction intervals, exclusion margins, recording coverage, class ratio, window duration, stride, cleaning, filtering, resampling, representation, normalization, frequency selection, and layout.
+- Apply each candidate's sample definitions, window size, cleaning, and transformations consistently to training, validation, and test. Fit population statistics and adaptive preprocessing parameters on training data only, then reuse them for validation and test through the fixed predictor interface.
+- Map different windows and representations to `(1, 1, 55, 114)`. Check physical frequency selection and normalization axes when resampling, transforms, or layouts change.
 
-**Keep fixed:** the dataset, event eligibility, labels, raw window coordinates, and splits. Preserve `prepare.py`, `research_protocol.py`, `utils/mouse_lfp.py`, `utils/__init__.py`, `SETTINGS_MouseLFP.json`, `evaluate.py`, `protocol.lock.json`, and all prepared data.
+**What you CANNOT do:**
 
-The protocol remains **978 events across seven mice**, positives **5-1 minutes before onset**, **28-second windows at 500 Hz**, eight reference windows per class, and a **14-second training stride** yielding 23 windows per class. Train Days **0-7**, validation Days **8/11**, and test Days **12/13** stay fixed. Preserve the existing seizure exclusions and same-mouse, same-day negative assignments.
+- Alter the private recordings or source annotations in `seizure_epochs_pitime_seizure_w15_t0.3_min5_gap10.parquet`.
+- Change training Days 0-7, validation Days 8/11, or test Days 12/13. The modeled mice remain X1/X2/X4/X9/X10/X14/X15.
+- Edit `train.py`, `models/cnn.py`, or `models/__init__.py`. Preserve the CNN, Adam at `5e-4`, batch size 32, label smoothing `0.1`, seed, training budget, epoch cap, and checkpoint rule.
+- Edit `prepare.py`, `source_data.py`, `evaluate.py`, `protocol.lock.json`, `SETTINGS_MouseLFP.json`, or supporting legacy data helpers during research. The fixed evaluator defines scoring and promotion.
+- Install packages, add dependencies, or change the runtime within a comparison session. An explicitly requested environment change requires a new session and matching baseline.
+- Compute test metrics or use test outcomes for recipe selection during the search. Final testing requires the user to end research and request `finalize`.
 
-**The objective:** maximize `validation_accuracy`, the equal-weight mean of the seven mice's window-level validation accuracies. The fixed evaluator computes accuracy at threshold `0.5`; AUC remains a reported metric. Fit preprocessing statistics on training data only, predict every original validation window, and keep test data sealed during research.
+**Objective: maximize `validation_accuracy`.** It is the equal-weight mean of seven mice's validation accuracies at threshold `0.5`. AUC, sensitivity, specificity, and loss provide supporting evidence. Checkpoints prefer higher accuracy, breaking ties with lower validation loss. The evaluator promotes the first successful baseline and subsequent candidates that improve mean accuracy by more than `1e-6`.
 
-Preserve the `fit`, `load_predictor`, and `predict_proba` interfaces in `train.py`. Save weights and inference statistics in `work_dir`; final evaluation restores them without retraining. Select epoch checkpoints by highest validation accuracy, using lower validation loss to break ties. README contains the full signatures.
+The historical 978-event cohort and 28-second windows are editable derived choices. The starting sampler combines eight reference offsets with a 14-second grid over the 5-1-minute positive interval, yielding 23 windows per event at default settings. It matches same-mouse/day negatives with ten-minute seizure margins and uses the existing event-history exclusions. Inspect actual offsets and selected dates when describing the recipe. The starting input uses 256 Hz resampling, log-STFT, and training-fitted normalization.
 
-**Resource use:** inspect GPU memory and elapsed time alongside the score. Prefer simple, maintainable improvements. Promotion requires an accuracy increase greater than `1e-6`.
+Changing eligibility, label horizons, exclusions, or class ratios changes the evaluated population or task. Identify that change alongside the score and fingerprint. Attribute gains to input processing only when the sample and label definitions support that comparison.
+
+**VRAM:** allow moderate increases for useful validation gains. Track peak allocation and favor recipes that execute reliably.
+
+**Simplicity criterion:** prefer clear, compact recipes. Weigh a gain against added branches, special cases, and maintenance cost; removing unnecessary processing is a useful hypothesis. The fixed promotion rule still applies: equal-scoring simplifications receive `discard`. Record their simplicity benefit without overriding the evaluator's status or `best.json`.
+
+**The first run:** establish a baseline with the current shared recipe before candidate edits. A resumed session starts from its saved best. Use all seven mice and the session's fixed training allowance for comparable results; keep smoke checks in separate sessions.
 
 ## Output format
 
-A successful experiment ends with these fields (example values):
+A successful run ends with a summary such as:
 
 ```text
 validation_accuracy: 0.750000000
@@ -53,40 +70,63 @@ Extract the summary from the redirected log:
 rg '^(validation_accuracy|status|experiment):' run.log
 ```
 
-Per-mouse scores and resource usage are in `experiments/<id>/result.json`; histories and worker logs are under `X*/`. Completing all seven mice is required for promotion.
+`$OUTPUT_DIR/experiments/<experiment-id>/result.json` contains the mean score, per-mouse metrics, fingerprints, and peak VRAM. Each `X*/` directory contains sampling configuration, event selection, split counts, training history, checkpoint, validation predictions, and worker logs. Inspect per-mouse and per-day behavior alongside the mean; overlapping windows from one event share evidence.
 
 ## Logging results
 
-The evaluator appends results to **`$OUTPUT_DIR/results.tsv`** using these tab-separated columns:
+The evaluator appends completed and failed attempts to `$OUTPUT_DIR/results.tsv`. It uses tabs and these eight columns:
 
 ```text
 experiment	commit	source_sha256	validation_accuracy	peak_vram_mb	wall_seconds	status	description
 ```
 
-The experiment ID locates source and model snapshots. Commit and source hash identify the recipe, including uncommitted edits. Failed runs have a blank accuracy. Memory is in MiB; elapsed time is in seconds. Status is `keep`, `discard`, or `crash`.
+1. Experiment identifier locating the source snapshot and artifacts.
+2. Git commit identifier.
+3. SHA-256 digest of the saved research source files.
+4. Mean validation accuracy; failed runs leave this field empty.
+5. Peak allocated GPU memory in MiB; failed runs may retain the default zero.
+6. Total experiment wall time in seconds, including preprocessing and evaluation.
+7. Evaluator status: `keep`, `discard`, or `crash`.
+8. Short English hypothesis description.
 
-The first completed experiment is `keep`. Later scores must improve on the best by more than `1e-6`; otherwise they are `discard`. Failures preserve `best.json`. Let the evaluator write the ledger. Keep generated results and checkpoints outside version control.
+Example with illustrative identifiers and source digests; the crash row has an empty accuracy field:
+
+```text
+experiment	commit	source_sha256	validation_accuracy	peak_vram_mb	wall_seconds	status	description
+baseline-id	a1b2c3d	<digest>	0.680000000	1200	2300	keep	baseline shared data recipe
+candidate-id	b2c3d4e	<digest>	0.700000000	1250	2350	keep	remove redundant positive offsets
+discard-id	c3d4e5f	<digest>	0.670000000	1300	2380	discard	transpose the input representation
+crash-id	d4e5f6a	<digest>		0	480	crash	feature construction exceeded the worker allowance
+```
+
+Let the evaluator write the ledger; inspect its row instead of appending a duplicate or changing its status. Keep generated logs, caches, checkpoints, and results outside version control. Each experiment snapshots both editable pipelines, the fixed trainer/CNN, `requirements.txt`, and `Dockerfile`.
+
+Report each recipe with its score, split sample counts, class ratio, eligible event counts, window duration, actual offsets or stride policy, prediction interval, exclusion settings, and evaluation-protocol fingerprint. Identify task-definition changes. Use `sampling_summary.json`, `event_selection.csv`, `sample_config.json`, and validation predictions as evidence. Record audit findings and interpretation in English with the experiment artifacts.
 
 ## The experiment loop
 
-Use the dedicated research branch.
+Conduct research on the dedicated branch, such as `autoresearch/oct13-data`.
 
-**Repeat continuously once research is requested:**
+LOOP FOREVER once the user has requested experiments:
 
-1. Inspect the current branch, best recipe, and recent results.
-2. Form a hypothesis and edit the research code, preferably changing one factor first.
-3. Commit only the experiment changes, protecting unrelated user work.
-4. Run `./run_research.sh experiment --description 'brief hypothesis' > run.log 2>&1`.
-5. Read the score, inspect all seven mice, and check the recorded ledger row.
-6. If **keep**, retain the recipe as the next starting point.
-7. If **discard**, run `./run_research.sh restore` before the next experiment. It restores the best training/model source and backs up current code. Restore dependency edits separately and rebuild when needed.
-8. If **crash**, read `status.json` and the affected mouse's `train.log`. Fix an implementation error and retry, or restore the best recipe and try another idea.
-9. Repeat and report meaningful progress periodically.
+1. Inspect the branch, commit, working tree, saved best recipe, sampling summaries, and recent results. Check that the starting pipeline matches the selected best.
+2. Form a data construction, cleaning, representation, normalization, or layout hypothesis. Edit `sample_pipeline.py` and/or `input_pipeline.py`, sharing processing across all splits. Check sample boundaries, labels, coverage, shapes, and training-only fitting before launching.
+3. Commit only the candidate's pipeline changes. Preserve unrelated user changes and keep generated experiment artifacts untracked.
+4. Run `./run_research.sh experiment --description 'brief hypothesis' > run.log 2>&1`. Redirect training output to the log so it stays out of the conversation context.
+5. Read the summary with `rg '^(validation_accuracy|status|experiment):' run.log`. Inspect the result JSON, per-mouse metrics, histories, sample counts, event eligibility, and fingerprints.
+6. If the summary is missing or the process failed, inspect `tail -n 50 run.log`, the experiment's `status.json`, and the affected mouse's `train.log`. Repair clear implementation errors and retry; abandon a broken idea after a few unsuccessful fixes.
+7. Verify the evaluator's ledger row and preserve the recipe details. For a failure before an experiment record is created, retain the launch log and diagnose setup before retrying. Keep the ledger and experiment artifacts untracked.
+8. For `keep`, retain the candidate as the next starting point. Explain the gain with its data definition, including changes to the label horizon or evaluated cohort.
+9. For `discard`, run `./run_research.sh restore`. It backs up the current editable files and restores both pipelines from the best snapshot. Recover from broken candidates the same way. Preserve failed attempts, snapshots, the ledger, fixed controls, and unrelated user work; use file-scoped git updates to align the research state with the restored recipe.
 
-**Timeouts:** each mouse process is terminated after its training budget plus 180 seconds of overhead. Inspect the worker log before retrying.
+Continue from the best recipe and retain candidates promoted by the evaluator. Revisit earlier alternatives sparingly and use previous results to select the next hypothesis.
 
-**Continue autonomously:** after research starts, proceed without routine permission requests for the next experiment. Stop promptly when the user requests it or the task budget is exhausted. When progress stalls, inspect learning curves, revisit near-misses, or try a different preprocessing or architecture hypothesis.
+**Timeout:** each mouse receives its training allowance plus 180 seconds for startup, sample assembly, preprocessing, and evaluation: 480 seconds at the default budget. The evaluator terminates overdue workers and records `crash`. Inspect the worker log before retrying. A full-cohort run can take roughly 35 minutes of training plus overhead; apply the watchdog per mouse rather than a ten-minute limit to the whole experiment.
 
-**Final testing:** when the user ends the search and requests testing, run `./run_research.sh finalize`. It loads the best source snapshot, weights, and preprocessing state, evaluates the fixed test split, and seals the session. Test scores never select a recipe.
+**Crashes:** fix straightforward import, sample-coordinate, or shape errors and rerun. For OOM, impossible sample coverage, or an impractical representation, restore the best pipelines and try another hypothesis. Preserve failure records and continue searching.
 
-Reference: [Karpathy autoresearch program.md](https://github.com/karpathy/autoresearch/blob/master/program.md).
+**NEVER STOP:** after the requested loop starts, continue autonomously. Avoid routine requests to continue or choose a stopping point. If ideas run out, reread the pipelines, inspect source-quality findings and per-mouse errors, consult research referenced in the repository, combine promising ideas, or test a different representation. Continue until the user stops research or an explicit task or execution budget is reached. Honor stop requests immediately.
+
+The user may leave the agent running while away. Plan experiment throughput around seven sequential training allowances and report meaningful progress as results arrive.
+
+**Final testing:** when the user ends the search and requests `finalize`, run `./run_research.sh finalize` with the selected session's `OUTPUT_DIR`. The evaluator loads the best saved source snapshot and checkpoints, constructs test samples with that recipe, reuses training-fitted statistics, writes test predictions and `final.json`, and seals the session. Interrupted final evaluation can resume. Test metrics stay outside recipe selection.

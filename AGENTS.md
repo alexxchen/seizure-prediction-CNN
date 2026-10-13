@@ -1,16 +1,18 @@
 # MouseLFP autoresearch
 
-The autonomous research workflow is documented in [program.md](program.md). Read it and README before conducting model research.
+Read [program.md](program.md) and README before conducting research.
 
-- Use English for all project documentation, comments, prompts, log messages, and experiment descriptions.
-- Keep the dataset, event eligibility, labels, raw window coordinates, 28-second duration, 14-second training stride, and day splits fixed.
-- During autonomous experiments, primarily edit `train.py` and `models/*.py`. Preprocessing, models, optimizers, and training strategies are editable. Fit statistics on the training set only.
-- `prepare.py`, `research_protocol.py`, `utils/mouse_lfp.py`, `utils/__init__.py`, `SETTINGS_MouseLFP.json`, `evaluate.py`, and `protocol.lock.json` form the fixed data and evaluation boundary during research.
-- Use `./run_research.sh experiment` and compare mean validation accuracy across all seven mice within the same session. Establish a baseline before iterating and preserve complete keep/discard/crash records.
-- `./run_research.sh restore` recovers the best training and model source code after backing up the current files. Protect existing user changes.
-- Use separate smoke sessions for X15 and short budgets. After the search ends, `finalize` loads the selected weights for testing. Test results are excluded from model selection.
-- Dependencies and Docker recipes are editable. Establish a matching baseline in a new session after changing the environment.
-- Explicit engineering maintenance tasks may modify infrastructure while preserving the existing dataset, window, and split protocol.
-- Start the research loop when the user requests experiments. Documentation changes and project checks do not start research.
+- Keep the private continuous LFP recordings, source annotation file, and day splits unchanged. Train Days 0-7, validation Days 8/11, and test Days 12/13 remain fixed.
+- Research focuses on data construction, cleaning, representation, and input layout. Edit `sample_pipeline.py` and `input_pipeline.py`.
+- Apply each candidate's sample definitions, window size, cleaning, and feature transformations consistently to training, validation, and test data. Fit normalization statistics on training data only and reuse them for validation and testing. Identical processing does not require fitting each split to its own statistics.
+- Event eligibility, positive/negative sampling, exclusion margins, window duration, and stride are editable derived choices. The historical 978-event cohort and 28-second windows are a previous recipe, not immutable source data.
+- Preserve the current CNN, its input shape `(1, 1, 55, 114)`, and training controls. `train.py`, `models/cnn.py`, and `models/__init__.py` are fixed during data experiments.
+- `prepare.py`, `source_data.py`, `evaluate.py`, `protocol.lock.json`, `SETTINGS_MouseLFP.json`, and supporting legacy data helpers are fixed infrastructure during research.
+- Compare seven-mouse mean validation accuracy at threshold 0.5. Record each recipe's sample counts, class ratio, window settings, and evaluation-protocol fingerprint alongside its score. Changes to labeling or exclusions change the evaluated task and must be identified in comparisons.
+- `./run_research.sh restore` restores the best sampling and input code after backing up current code. Preserve unrelated user changes and previous experiment records.
+- Keep runtime dependencies constant within a comparison session. Explicit environment changes require a new session and matching baseline.
+- Source preparation verifies recordings and labels; it does not certify that the private signals are clean. Audit source quality and label alignment before interpreting results.
+- Validation results select recipes. Test metrics are computed only when the user ends research and requests `finalize`; its samples and preprocessing come from the selected recipe.
+- Documentation changes and project checks leave the experiment loop inactive. Start research when the user requests experiments and stop when asked.
 
-See README for local execution commands and the available Docker environment.
+See README for local execution and Docker commands.

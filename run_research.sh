@@ -3,7 +3,7 @@ set -euo pipefail
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 data_dir="${DATA_DIR:-/data/users/jianchen/data/seizure_data}"
-prepared_dir="${PREPARED_DIR:-/data/users/jianchen/data/seizure_data-cache/autoresearch-raw-v1}"
+prepared_dir="${PREPARED_DIR:-/data/users/jianchen/data/seizure_data-cache/autoresearch-source-v1}"
 run_dir="${OUTPUT_DIR:-$project_dir/autoresearch-runs/default}"
 image_name="${IMAGE_NAME:-seizure-prediction-cnn:pytorch}"
 action=experiment
@@ -20,10 +20,10 @@ while (( $# )); do
         -h|--help)
             cat <<'HELP'
 Usage: ./run_research.sh [prepare|experiment|restore|finalize] [OPTIONS]
-  prepare      Prepare the fixed raw windows once (default: all seven mice)
+  prepare      Verify the fixed raw source inventory and annotation file
   experiment   Run one recipe and compare validation accuracy (default action)
-  restore      Restore the best recipe, backing up current training/model code
-  finalize     Evaluate selected checkpoints on the fixed test set
+  restore      Restore the best sampling and input code, backing up current code
+  finalize     Evaluate selected checkpoints using the best recipe on test days
 
 Experiment options: --targets X1,X2,... --device cuda|cpu|auto
                     --budget-seconds 300 --seed 0 --description TEXT
@@ -62,16 +62,17 @@ command_args=(docker run --rm --init --shm-size=1g
     -e "OMP_NUM_THREADS=${TRAIN_CPU_THREADS:-4}" -e "MKL_NUM_THREADS=${TRAIN_CPU_THREADS:-4}"
     -e "MPLCONFIGDIR=/tmp/matplotlib-$(id -u)"
     -w /workspace -v "$project_dir:/workspace:$project_mode"
-    -v "$prepared_dir:/prepared:$prepared_mode" -v "$run_dir:/output")
+    -v "$prepared_dir:/prepared:$prepared_mode" -v "$run_dir:/output"
+    -v "$data_dir:/data/MouseLFP:ro")
 if [[ "$action" != prepare && "$action" != restore && "$device" != cpu ]]; then
     command_args+=(--gpus all)
 fi
 if [[ "$action" == prepare ]]; then
-    command_args+=(-v "$data_dir:/data/MouseLFP:ro" "$image_name"
+    command_args+=("$image_name"
         python prepare.py --data-dir /data/MouseLFP --output /prepared "${arguments[@]}")
 else
     command_args+=("$image_name" python evaluate.py "$action"
-        --prepared-dir /prepared --run-dir /output "${arguments[@]}")
+        --prepared-dir /prepared --data-dir /data/MouseLFP --run-dir /output "${arguments[@]}")
 fi
 if "$dry_run"; then
     printf '%q ' "${command_args[@]}"
@@ -82,7 +83,7 @@ if [[ "$action" == prepare ]]; then
     [[ -d "$data_dir" ]] || { echo "Data directory missing: $data_dir" >&2; exit 1; }
     mkdir -p -- "$prepared_dir"
 else
-    [[ -f "$prepared_dir/manifest.json" ]] || { echo 'Prepare raw windows first: ./run_research.sh prepare' >&2; exit 1; }
+    [[ -f "$prepared_dir/manifest.json" ]] || { echo 'Prepare the source inventory first: ./run_research.sh prepare' >&2; exit 1; }
 fi
 mkdir -p -- "$run_dir"
 exec "${command_args[@]}"

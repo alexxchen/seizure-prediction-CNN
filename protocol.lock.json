@@ -1,7 +1,8 @@
 {
   "protocol": {
-    "version": 1,
+    "version": 2,
     "dataset": "MouseLFP",
+    "source_hz": 500,
     "targets": [
       "X1",
       "X2",
@@ -11,27 +12,6 @@
       "X14",
       "X15"
     ],
-    "event_counts": {
-      "X1": 137,
-      "X2": 259,
-      "X4": 59,
-      "X9": 267,
-      "X10": 61,
-      "X14": 169,
-      "X15": 26
-    },
-    "total_events": 978,
-    "positive_interval_minutes": [
-      5,
-      1
-    ],
-    "source_hz": 500,
-    "window_seconds": 28,
-    "window_rows": 14000,
-    "reference_windows_per_class": 8,
-    "negative_matching_grid": 10,
-    "training_stride_seconds": 14,
-    "training_windows_per_class": 23,
     "day_splits": {
       "train": [
         0,
@@ -52,560 +32,3552 @@
         13
       ]
     },
-    "split_events": {
-      "train": 649,
-      "validation": 168,
-      "test": 161
-    },
-    "split_samples": {
-      "train": 29854,
-      "validation": 2688,
-      "test": 2576
-    },
-    "negative_exclusion_minutes": {
-      "before_onset": 10,
-      "after_end": 10
-    },
-    "positive_other_seizure_exclusion_minutes": {
-      "before_onset": 0,
-      "after_end": 5
-    },
-    "event_eligibility_interval_minutes": [
-      10,
-      5
-    ],
     "score": "macro_validation_accuracy",
     "direction": "maximize"
   },
   "dataset_signature": {
-    "version": 2,
     "annotation_sha256": "b3c4b18adcdbb9e4db41422f64b848f71c31ee88ad470a31fe8e420fa9ad687f",
     "sources": {
       "250919_seizure_X1_1_Days_0_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 0,
         "rows": 43196870,
         "start_ms": 3753223660,
+        "end_ms": 3839617398,
         "size": 3837851469,
-        "mtime_ns": 1791595922755049966
+        "mtime_ns": 1791595922755049966,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_11_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 11,
         "rows": 43196881,
         "start_ms": 4703623655,
+        "end_ms": 4790017415,
         "size": 3836087774,
-        "mtime_ns": 1791595955642713569
+        "mtime_ns": 1791595955642713569,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_12_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 12,
         "rows": 43196876,
         "start_ms": 4790023645,
+        "end_ms": 4876417395,
         "size": 3837222021,
-        "mtime_ns": 1791595988814583199
+        "mtime_ns": 1791595988814583199,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_13_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 13,
         "rows": 43196898,
         "start_ms": 4876423618,
+        "end_ms": 4962817412,
         "size": 3838091574,
-        "mtime_ns": 1791596022280433493
+        "mtime_ns": 1791596022280433493,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_1_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 1,
         "rows": 43196899,
         "start_ms": 3839623612,
+        "end_ms": 3926017408,
         "size": 3841463456,
-        "mtime_ns": 1791596056374273588
+        "mtime_ns": 1791596056374273588,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_2_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 2,
         "rows": 43196885,
         "start_ms": 3926023632,
+        "end_ms": 4012417400,
         "size": 3838716560,
-        "mtime_ns": 1791596090268084262
+        "mtime_ns": 1791596090268084262,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_3_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 3,
         "rows": 43196890,
         "start_ms": 4012423622,
+        "end_ms": 4098817400,
         "size": 3839514095,
-        "mtime_ns": 1791596126147917571
+        "mtime_ns": 1791596126147917571,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_4_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 4,
         "rows": 43196896,
         "start_ms": 4098823625,
+        "end_ms": 4185217415,
         "size": 3842291375,
-        "mtime_ns": 1791596160308580414
+        "mtime_ns": 1791596160308580414,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_5_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 5,
         "rows": 43196882,
         "start_ms": 4185223638,
+        "end_ms": 4271617400,
         "size": 3839829094,
-        "mtime_ns": 1791596194540441211
+        "mtime_ns": 1791596194540441211,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_6_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 6,
         "rows": 43196887,
         "start_ms": 4271623623,
+        "end_ms": 4358017395,
         "size": 3838927191,
-        "mtime_ns": 1791596230003200709
+        "mtime_ns": 1791596230003200709,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_7_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 7,
         "rows": 43196887,
         "start_ms": 4358023625,
+        "end_ms": 4444417397,
         "size": 3839146539,
-        "mtime_ns": 1791596265119934030
+        "mtime_ns": 1791596265119934030,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X1_1_Days_8_interpolated.parquet": {
+        "mouse": "X1",
+        "day": 8,
         "rows": 43196888,
         "start_ms": 4444423621,
+        "end_ms": 4530817395,
         "size": 3838238809,
-        "mtime_ns": 1791596300280650809
+        "mtime_ns": 1791596300280650809,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_0_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 0,
         "rows": 43196850,
         "start_ms": 8061372952,
+        "end_ms": 8147766650,
         "size": 3829213843,
-        "mtime_ns": 1791596335593354270
+        "mtime_ns": 1791596335593354270,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_11_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 11,
         "rows": 43196893,
         "start_ms": 9011772866,
+        "end_ms": 9098166650,
         "size": 3819464607,
-        "mtime_ns": 1791596371136046810
+        "mtime_ns": 1791596371136046810,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_12_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 12,
         "rows": 43196892,
         "start_ms": 9098172873,
+        "end_ms": 9184566655,
         "size": 3823533780,
-        "mtime_ns": 1791596407311736786
+        "mtime_ns": 1791596407311736786,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_13_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 13,
         "rows": 43196893,
         "start_ms": 9184572881,
+        "end_ms": 9270966665,
         "size": 3825023223,
-        "mtime_ns": 1791596442749399099
+        "mtime_ns": 1791596442749399099,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_1_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 1,
         "rows": 43196892,
         "start_ms": 8147772864,
+        "end_ms": 8234166646,
         "size": 3838579921,
-        "mtime_ns": 1791596478426053213
+        "mtime_ns": 1791596478426053213,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_2_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 2,
         "rows": 43196895,
         "start_ms": 8234172869,
+        "end_ms": 8320566657,
         "size": 3834379563,
-        "mtime_ns": 1791596513527685209
+        "mtime_ns": 1791596513527685209,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_3_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 3,
         "rows": 43196887,
         "start_ms": 8320572879,
+        "end_ms": 8406966651,
         "size": 3827243657,
-        "mtime_ns": 1791596549599323514
+        "mtime_ns": 1791596549599323514,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_4_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 4,
         "rows": 43196892,
         "start_ms": 8406972871,
+        "end_ms": 8493366653,
         "size": 3825132687,
-        "mtime_ns": 1791596583897920652
+        "mtime_ns": 1791596583897920652,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_5_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 5,
         "rows": 43196889,
         "start_ms": 8493372883,
+        "end_ms": 8579766659,
         "size": 3826449867,
-        "mtime_ns": 1791596617992505402
+        "mtime_ns": 1791596617992505402,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_6_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 6,
         "rows": 43196882,
         "start_ms": 8579772881,
+        "end_ms": 8666166643,
         "size": 3820962339,
-        "mtime_ns": 1791596651206067112
+        "mtime_ns": 1791596651206067112,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_7_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 7,
         "rows": 43196898,
         "start_ms": 8666172856,
+        "end_ms": 8752566650,
         "size": 3820835364,
-        "mtime_ns": 1791596685929646533
+        "mtime_ns": 1791596685929646533,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X2_1_Days_8_interpolated.parquet": {
+        "mouse": "X2",
+        "day": 8,
         "rows": 43196897,
         "start_ms": 8752572863,
+        "end_ms": 8838966655,
         "size": 3823908175,
-        "mtime_ns": 1791596719800204503
+        "mtime_ns": 1791596719800204503,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250919_seizure_X4_1_Days_0_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 0,
+        "rows": 43196767,
+        "start_ms": 3753354257,
+        "end_ms": 3839747789,
+        "size": 3844722655,
+        "mtime_ns": 1791596755119779250,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_11_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 11,
         "rows": 43196897,
         "start_ms": 4703753995,
+        "end_ms": 4790147787,
         "size": 3832304756,
-        "mtime_ns": 1791596790892354477
+        "mtime_ns": 1791596790892354477,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_12_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 12,
         "rows": 43196878,
         "start_ms": 4790154015,
+        "end_ms": 4876547769,
         "size": 3832851691,
-        "mtime_ns": 1791596828713955625
+        "mtime_ns": 1791596828713955625,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_13_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 13,
         "rows": 43196887,
         "start_ms": 4876553995,
+        "end_ms": 4962947767,
         "size": 3832571794,
-        "mtime_ns": 1791596864748522112
+        "mtime_ns": 1791596864748522112,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_1_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 1,
         "rows": 43196889,
         "start_ms": 3839754015,
+        "end_ms": 3926147791,
         "size": 3845888248,
-        "mtime_ns": 1791596903212120523
+        "mtime_ns": 1791596903212120523,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_2_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 2,
         "rows": 43196890,
         "start_ms": 3926154017,
+        "end_ms": 4012547795,
         "size": 3842337626,
-        "mtime_ns": 1791596940426693783
+        "mtime_ns": 1791596940426693783,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_3_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 3,
         "rows": 43196883,
         "start_ms": 4012554020,
+        "end_ms": 4098947784,
         "size": 3840320327,
-        "mtime_ns": 1791596977834264749
+        "mtime_ns": 1791596977834264749,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_4_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 4,
         "rows": 43196885,
         "start_ms": 4098954004,
+        "end_ms": 4185347772,
         "size": 3831978967,
-        "mtime_ns": 1791597013560805466
+        "mtime_ns": 1791597013560805466,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_5_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 5,
         "rows": 43196885,
         "start_ms": 4185354000,
+        "end_ms": 4271747768,
         "size": 3834077825,
-        "mtime_ns": 1791597046819305072
+        "mtime_ns": 1791597046819305072,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_6_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 6,
         "rows": 43196892,
         "start_ms": 4271753995,
+        "end_ms": 4358147777,
         "size": 3831328354,
-        "mtime_ns": 1791597079980799842
+        "mtime_ns": 1791597079980799842,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_7_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 7,
         "rows": 43196890,
         "start_ms": 4358153993,
+        "end_ms": 4444547771,
         "size": 3833639156,
-        "mtime_ns": 1791597113231292769
+        "mtime_ns": 1791597113231292769,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "250919_seizure_X4_1_Days_8_interpolated.parquet": {
+        "mouse": "X4",
+        "day": 8,
         "rows": 43196892,
         "start_ms": 4444553989,
+        "end_ms": 4530947771,
         "size": 3834068799,
-        "mtime_ns": 1791597148016805269
+        "mtime_ns": 1791597148016805269,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_0_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 0,
+        "rows": 43196874,
+        "start_ms": 2791593284,
+        "end_ms": 2877987030,
+        "size": 3831195529,
+        "mtime_ns": 1791597184478339198,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_11_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 11,
+        "rows": 43196892,
+        "start_ms": 3741993243,
+        "end_ms": 3828387025,
+        "size": 3825791900,
+        "mtime_ns": 1791597220030856817,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_12_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 12,
+        "rows": 43196900,
+        "start_ms": 3828393237,
+        "end_ms": 3914787035,
+        "size": 3827805979,
+        "mtime_ns": 1791597258330411345,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_13_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 13,
+        "rows": 43196888,
+        "start_ms": 3914793243,
+        "end_ms": 4001187017,
+        "size": 3830861645,
+        "mtime_ns": 1791597297062969119,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_1_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 1,
+        "rows": 43196888,
+        "start_ms": 2877993237,
+        "end_ms": 2964387011,
+        "size": 3837636451,
+        "mtime_ns": 1791597337208544268,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_2_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 2,
+        "rows": 43196901,
+        "start_ms": 2964393219,
+        "end_ms": 3050787019,
+        "size": 3839041001,
+        "mtime_ns": 1791597375988097185,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_3_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 3,
+        "rows": 43196905,
+        "start_ms": 3050793218,
+        "end_ms": 3137187026,
+        "size": 3836385751,
+        "mtime_ns": 1791597415033651447,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_4_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 4,
+        "rows": 43196907,
+        "start_ms": 3137193225,
+        "end_ms": 3223587037,
+        "size": 3832018341,
+        "mtime_ns": 1791597453616196900,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_5_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 5,
+        "rows": 43196892,
+        "start_ms": 3223593246,
+        "end_ms": 3309987028,
+        "size": 3828426521,
+        "mtime_ns": 1791597492127739295,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_6_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 6,
+        "rows": 43196900,
+        "start_ms": 3309993237,
+        "end_ms": 3396387035,
+        "size": 3825960175,
+        "mtime_ns": 1791597525228203954,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_7_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 7,
+        "rows": 43196896,
+        "start_ms": 3396393244,
+        "end_ms": 3482787034,
+        "size": 3826797574,
+        "mtime_ns": 1791597558854674647,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X5_1_Days_8_interpolated.parquet": {
+        "mouse": "X5",
+        "day": 8,
+        "rows": 43196895,
+        "start_ms": 3482793242,
+        "end_ms": 3569187030,
+        "size": 3829198341,
+        "mtime_ns": 1791597591985137151,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_0_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 0,
+        "rows": 43196888,
+        "start_ms": 10719678,
+        "end_ms": 97113452,
+        "size": 3832189186,
+        "mtime_ns": 1791597629160654749,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_11_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 11,
+        "rows": 43196892,
+        "start_ms": 961119646,
+        "end_ms": 1047513428,
+        "size": 3832604345,
+        "mtime_ns": 1791597673490270188,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_12_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 12,
+        "rows": 43196903,
+        "start_ms": 1047519637,
+        "end_ms": 1133913441,
+        "size": 3826958722,
+        "mtime_ns": 1791597718723896353,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_13_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 13,
+        "rows": 43196904,
+        "start_ms": 1133919650,
+        "end_ms": 1220313456,
+        "size": 3834573399,
+        "mtime_ns": 1791597757799435910,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_1_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 1,
+        "rows": 43196889,
+        "start_ms": 97119659,
+        "end_ms": 183513435,
+        "size": 3837072366,
+        "mtime_ns": 1791597798109991299,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_2_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 2,
+        "rows": 43196906,
+        "start_ms": 183519643,
+        "end_ms": 269913453,
+        "size": 3840988867,
+        "mtime_ns": 1791597836319516680,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_3_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 3,
+        "rows": 43196894,
+        "start_ms": 269919660,
+        "end_ms": 356313446,
+        "size": 3836517554,
+        "mtime_ns": 1791597870294983038,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_4_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 4,
+        "rows": 43196896,
+        "start_ms": 356319654,
+        "end_ms": 442713444,
+        "size": 3834120591,
+        "mtime_ns": 1791597903601439525,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_5_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 5,
+        "rows": 43196894,
+        "start_ms": 442719653,
+        "end_ms": 529113439,
+        "size": 3829784621,
+        "mtime_ns": 1791597937229899779,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_6_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 6,
+        "rows": 43196892,
+        "start_ms": 529119647,
+        "end_ms": 615513429,
+        "size": 3829753360,
+        "mtime_ns": 1791597971892373550,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_7_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 7,
+        "rows": 43196902,
+        "start_ms": 615519636,
+        "end_ms": 701913438,
+        "size": 3831004937,
+        "mtime_ns": 1791598013952959025,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X6_1_Days_8_interpolated.parquet": {
+        "mouse": "X6",
+        "day": 8,
+        "rows": 43196901,
+        "start_ms": 701919647,
+        "end_ms": 788313447,
+        "size": 3827851256,
+        "mtime_ns": 1791598054701529522,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_0_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 0,
+        "rows": 43196461,
+        "start_ms": 4493083,
+        "end_ms": 90886003,
+        "size": 3832215040,
+        "mtime_ns": 1791598096550113712,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_11_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 11,
+        "rows": 43196902,
+        "start_ms": 954892207,
+        "end_ms": 1041286009,
+        "size": 3825802306,
+        "mtime_ns": 1791598141407738142,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_12_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 12,
+        "rows": 43196902,
+        "start_ms": 1041292217,
+        "end_ms": 1127686019,
+        "size": 3824774284,
+        "mtime_ns": 1791598184874341605,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_13_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 13,
+        "rows": 43196896,
+        "start_ms": 1127692224,
+        "end_ms": 1214086014,
+        "size": 3823292110,
+        "mtime_ns": 1791598225653906444,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_1_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 1,
+        "rows": 43196905,
+        "start_ms": 90892212,
+        "end_ms": 177286020,
+        "size": 3835695328,
+        "mtime_ns": 1791598265857462153,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_2_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 2,
+        "rows": 43196891,
+        "start_ms": 177292228,
+        "end_ms": 263686008,
+        "size": 3834269366,
+        "mtime_ns": 1791598304488995136,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_3_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 3,
+        "rows": 43196897,
+        "start_ms": 263692216,
+        "end_ms": 350086008,
+        "size": 3827171524,
+        "mtime_ns": 1791598340800495284,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_4_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 4,
+        "rows": 43196900,
+        "start_ms": 350092214,
+        "end_ms": 436486012,
+        "size": 3832078278,
+        "mtime_ns": 1791598374023952245,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_5_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 5,
+        "rows": 43196903,
+        "start_ms": 436492220,
+        "end_ms": 522886024,
+        "size": 3835804952,
+        "mtime_ns": 1791598407500412096,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_6_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 6,
+        "rows": 43196898,
+        "start_ms": 522892232,
+        "end_ms": 609286026,
+        "size": 3832472051,
+        "mtime_ns": 1791598441249875135,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_7_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 7,
+        "rows": 43196892,
+        "start_ms": 609292234,
+        "end_ms": 695686016,
+        "size": 3825592146,
+        "mtime_ns": 1791598480739416257,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X7_1_Days_8_interpolated.parquet": {
+        "mouse": "X7",
+        "day": 8,
+        "rows": 43196890,
+        "start_ms": 695692224,
+        "end_ms": 782086002,
+        "size": 3823896385,
+        "mtime_ns": 1791598519806950938,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_0_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 0,
+        "rows": 43196884,
+        "start_ms": 7006226,
+        "end_ms": 93399992,
+        "size": 3833772151,
+        "mtime_ns": 1791598559937499534,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_11_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 11,
+        "rows": 43196902,
+        "start_ms": 957406182,
+        "end_ms": 1043799984,
+        "size": 3826204424,
+        "mtime_ns": 1791598603333092098,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_12_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 12,
+        "rows": 43196895,
+        "start_ms": 1043806193,
+        "end_ms": 1130199981,
+        "size": 3825988648,
+        "mtime_ns": 1791598646552681627,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_13_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 13,
+        "rows": 43196898,
+        "start_ms": 1130206187,
+        "end_ms": 1216599981,
+        "size": 3825646986,
+        "mtime_ns": 1791598691461293580,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_1_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 1,
+        "rows": 43196901,
+        "start_ms": 93406199,
+        "end_ms": 179799999,
+        "size": 3837648506,
+        "mtime_ns": 1791598731579839775,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_2_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 2,
+        "rows": 43196887,
+        "start_ms": 179806207,
+        "end_ms": 266199979,
+        "size": 3831366252,
+        "mtime_ns": 1791598769998362427,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_3_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 3,
+        "rows": 43196906,
+        "start_ms": 266206187,
+        "end_ms": 352599997,
+        "size": 3825578269,
+        "mtime_ns": 1791598809085893810,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_4_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 4,
+        "rows": 43196893,
+        "start_ms": 352606205,
+        "end_ms": 438999989,
+        "size": 3823365748,
+        "mtime_ns": 1791598842268344643,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_5_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 5,
+        "rows": 43196899,
+        "start_ms": 439006197,
+        "end_ms": 525399993,
+        "size": 3826136224,
+        "mtime_ns": 1791598875682798395,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_6_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 6,
+        "rows": 43196897,
+        "start_ms": 525406205,
+        "end_ms": 611799997,
+        "size": 3827891997,
+        "mtime_ns": 1791598909452256740,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_7_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 7,
+        "rows": 43196891,
+        "start_ms": 611806204,
+        "end_ms": 698199984,
+        "size": 3827933015,
+        "mtime_ns": 1791598947072767107,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "250925_saline_X8_1_Days_8_interpolated.parquet": {
+        "mouse": "X8",
+        "day": 8,
+        "rows": 43196893,
+        "start_ms": 698206191,
+        "end_ms": 784599975,
+        "size": 3826032570,
+        "mtime_ns": 1791598986888306986,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_0_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 0,
+        "rows": 43196891,
+        "start_ms": 4070277180,
+        "end_ms": 4156670960,
+        "size": 3827484436,
+        "mtime_ns": 1791599027711860272,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_11_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 11,
+        "rows": 43196844,
+        "start_ms": 5020766976,
+        "end_ms": 5107160662,
+        "size": 3824344331,
+        "mtime_ns": 1791599070638441795,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_12_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 12,
+        "rows": 43196904,
+        "start_ms": 5107166866,
+        "end_ms": 5193560672,
+        "size": 3828532215,
+        "mtime_ns": 1791599113833026697,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_13_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 13,
+        "rows": 43196889,
+        "start_ms": 5193566881,
+        "end_ms": 5279960657,
+        "size": 3824938266,
+        "mtime_ns": 1791599157397616372,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_1_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 1,
+        "rows": 43196897,
+        "start_ms": 4156677167,
+        "end_ms": 4243070959,
+        "size": 3824918043,
+        "mtime_ns": 1791599197250155611,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_2_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 2,
+        "rows": 43196891,
+        "start_ms": 4243077167,
+        "end_ms": 4329470947,
+        "size": 3828092395,
+        "mtime_ns": 1791599237287697185,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_3_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 3,
+        "rows": 43196903,
+        "start_ms": 4329477158,
+        "end_ms": 4415870962,
+        "size": 3826762606,
+        "mtime_ns": 1791599276713230327,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_4_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 4,
+        "rows": 43196889,
+        "start_ms": 4415877168,
+        "end_ms": 4502270944,
+        "size": 3828749803,
+        "mtime_ns": 1791599310384685546,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_5_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 5,
+        "rows": 43196901,
+        "start_ms": 4502277156,
+        "end_ms": 4588670956,
+        "size": 3825650077,
+        "mtime_ns": 1791599343944139155,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_6_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 6,
+        "rows": 43196897,
+        "start_ms": 4588677164,
+        "end_ms": 4675070956,
+        "size": 3823854162,
+        "mtime_ns": 1791599377111587377,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_7_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 7,
+        "rows": 43196897,
+        "start_ms": 4675077160,
+        "end_ms": 4761470952,
+        "size": 3825574061,
+        "mtime_ns": 1791599413235075455,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_saline_X11_1_Days_8_interpolated.parquet": {
+        "mouse": "X11",
+        "day": 8,
+        "rows": 43196903,
+        "start_ms": 4761477157,
+        "end_ms": 4847870961,
+        "size": 3823043491,
+        "mtime_ns": 1791599452986612447,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_0_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 0,
         "rows": 43196887,
         "start_ms": 4067740278,
+        "end_ms": 4154134050,
         "size": 3837747091,
-        "mtime_ns": 1791599492785149973
+        "mtime_ns": 1791599492785149973,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_11_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 11,
         "rows": 43196887,
         "start_ms": 5018236731,
+        "end_ms": 5104630503,
         "size": 3835241040,
-        "mtime_ns": 1791599534047707173
+        "mtime_ns": 1791599534047707173,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_12_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 12,
         "rows": 43196904,
         "start_ms": 5104636712,
+        "end_ms": 5191030518,
         "size": 3838943534,
-        "mtime_ns": 1791599577511293994
+        "mtime_ns": 1791599577511293994,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_13_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 13,
         "rows": 43196886,
         "start_ms": 5191036728,
+        "end_ms": 5277430498,
         "size": 3841226997,
-        "mtime_ns": 1791599619571861783
+        "mtime_ns": 1791599619571861783,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_1_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 1,
         "rows": 43196894,
         "start_ms": 4154140258,
+        "end_ms": 4240534044,
         "size": 3839037075,
-        "mtime_ns": 1791599661098422281
+        "mtime_ns": 1791599661098422281,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_2_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 2,
         "rows": 43196902,
         "start_ms": 4240540251,
+        "end_ms": 4326934053,
         "size": 3839644069,
-        "mtime_ns": 1791599699917946175
+        "mtime_ns": 1791599699917946175,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_3_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 3,
         "rows": 43196886,
         "start_ms": 4326940261,
+        "end_ms": 4413334031,
         "size": 3841286340,
-        "mtime_ns": 1791599738566467702
+        "mtime_ns": 1791599738566467702,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_4_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 4,
         "rows": 43196901,
         "start_ms": 4413340246,
+        "end_ms": 4499734046,
         "size": 3843643382,
-        "mtime_ns": 1791599777031986704
+        "mtime_ns": 1791599777031986704,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251111_seizure_X10_1_Days_5_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 5,
+        "rows": 43196887,
+        "start_ms": 4499740253,
+        "end_ms": 4586134025,
+        "size": 3838267435,
+        "mtime_ns": 1791599810747441575,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_6_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 6,
         "rows": 43196901,
         "start_ms": 4586140232,
+        "end_ms": 4672534032,
         "size": 3837592421,
-        "mtime_ns": 1791599844158892307
+        "mtime_ns": 1791599844158892307,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_7_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 7,
         "rows": 43196901,
         "start_ms": 4672540242,
+        "end_ms": 4758934042,
         "size": 3835564216,
-        "mtime_ns": 1791599878213351680
+        "mtime_ns": 1791599878213351680,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X10_1_Days_8_interpolated.parquet": {
+        "mouse": "X10",
+        "day": 8,
         "rows": 43196902,
         "start_ms": 4758940249,
+        "end_ms": 4845334051,
         "size": 3833100363,
-        "mtime_ns": 1791599918665897318
+        "mtime_ns": 1791599918665897318,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_0_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 0,
         "rows": 43196875,
         "start_ms": 4073909516,
+        "end_ms": 4160303264,
         "size": 3835944058,
-        "mtime_ns": 1791599959212444181
+        "mtime_ns": 1791599959212444181,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_11_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 11,
         "rows": 43196881,
         "start_ms": 5024409850,
+        "end_ms": 5110803610,
         "size": 3832893908,
-        "mtime_ns": 1791600001839019053
+        "mtime_ns": 1791600001839019053,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_12_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 12,
         "rows": 43196896,
         "start_ms": 5110809817,
+        "end_ms": 5197203607,
         "size": 3832920421,
-        "mtime_ns": 1791600043482537331
+        "mtime_ns": 1791600043482537331,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_13_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 13,
         "rows": 43196895,
         "start_ms": 5197209818,
+        "end_ms": 5283603606,
         "size": 3836277523,
-        "mtime_ns": 1791600083583920317
+        "mtime_ns": 1791600083583920317,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_1_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 1,
         "rows": 43196908,
         "start_ms": 4160309466,
+        "end_ms": 4246703280,
         "size": 3837978638,
-        "mtime_ns": 1791600125209328931
+        "mtime_ns": 1791600125209328931,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_2_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 2,
         "rows": 43196900,
         "start_ms": 4246709484,
+        "end_ms": 4333103282,
         "size": 3833176860,
-        "mtime_ns": 1791600162048699271
+        "mtime_ns": 1791600162048699271,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_3_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 3,
         "rows": 43196894,
         "start_ms": 4333109489,
+        "end_ms": 4419503275,
         "size": 3835968659,
-        "mtime_ns": 1791600201837107761
+        "mtime_ns": 1791600201837107761,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_4_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 4,
         "rows": 43196894,
         "start_ms": 4419509483,
+        "end_ms": 4505903269,
         "size": 3837134090,
-        "mtime_ns": 1791600241195519891
+        "mtime_ns": 1791600241195519891,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_5_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 5,
         "rows": 43196894,
         "start_ms": 4505909477,
+        "end_ms": 4592303263,
         "size": 3834751464,
-        "mtime_ns": 1791600274564875139
+        "mtime_ns": 1791600274564875139,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_6_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 6,
         "rows": 43196909,
         "start_ms": 4592309471,
+        "end_ms": 4678703287,
         "size": 3832989613,
-        "mtime_ns": 1791600307737233241
+        "mtime_ns": 1791600307737233241,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_7_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 7,
         "rows": 43196892,
         "start_ms": 4678709495,
+        "end_ms": 4765103277,
         "size": 3833969414,
-        "mtime_ns": 1791600341731605012
+        "mtime_ns": 1791600341731605012,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251111_seizure_X9_1_Days_8_interpolated.parquet": {
+        "mouse": "X9",
+        "day": 8,
         "rows": 43196896,
         "start_ms": 4765109486,
+        "end_ms": 4851503276,
         "size": 3833523575,
-        "mtime_ns": 1791600378712014590
+        "mtime_ns": 1791600378712014590,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_0_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 0,
+        "rows": 43196746,
+        "start_ms": 4375891,
+        "end_ms": 90769381,
+        "size": 3835249754,
+        "mtime_ns": 1791600420471483095,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_11_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 11,
+        "rows": 43196890,
+        "start_ms": 954775613,
+        "end_ms": 1041169391,
+        "size": 3827820361,
+        "mtime_ns": 1791600462594961640,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_12_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 12,
+        "rows": 43196888,
+        "start_ms": 1041175608,
+        "end_ms": 1127569382,
+        "size": 3822325753,
+        "mtime_ns": 1791600505112450249,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_13_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 13,
+        "rows": 43196891,
+        "start_ms": 1127575604,
+        "end_ms": 1213969384,
+        "size": 3822551079,
+        "mtime_ns": 1791600549834969765,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_1_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 1,
+        "rows": 43196890,
+        "start_ms": 90775604,
+        "end_ms": 177169382,
+        "size": 3832197417,
+        "mtime_ns": 1791600593093477263,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_2_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 2,
+        "rows": 43196892,
+        "start_ms": 177175595,
+        "end_ms": 263569377,
+        "size": 3832970230,
+        "mtime_ns": 1791600632380942084,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_3_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 3,
+        "rows": 43196892,
+        "start_ms": 263575601,
+        "end_ms": 349969383,
+        "size": 3827751935,
+        "mtime_ns": 1791600672355418563,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_4_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 4,
+        "rows": 43196878,
+        "start_ms": 349975606,
+        "end_ms": 436369360,
+        "size": 3826473980,
+        "mtime_ns": 1791600710826880239,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_5_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 5,
+        "rows": 43196904,
+        "start_ms": 436375583,
+        "end_ms": 522769389,
+        "size": 3831202147,
+        "mtime_ns": 1791600745328296686,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_6_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 6,
+        "rows": 43196890,
+        "start_ms": 522775612,
+        "end_ms": 609169390,
+        "size": 3830130695,
+        "mtime_ns": 1791600778604700362,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_7_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 7,
+        "rows": 43196875,
+        "start_ms": 609175613,
+        "end_ms": 695569361,
+        "size": 3823729797,
+        "mtime_ns": 1791600811885105940,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X12_1_Days_8_interpolated.parquet": {
+        "mouse": "X12",
+        "day": 8,
+        "rows": 43196904,
+        "start_ms": 695575584,
+        "end_ms": 781969390,
+        "size": 3823579337,
+        "mtime_ns": 1791600845603518629,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_0_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 0,
+        "rows": 43196655,
+        "start_ms": 84393,
+        "end_ms": 86477701,
+        "size": 3835028703,
+        "mtime_ns": 1791600888078040849,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_11_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 11,
+        "rows": 43196904,
+        "start_ms": 950483884,
+        "end_ms": 1036877690,
+        "size": 3825386176,
+        "mtime_ns": 1791600927130523151,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_12_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 12,
+        "rows": 43196897,
+        "start_ms": 1036883897,
+        "end_ms": 1123277689,
+        "size": 3818918757,
+        "mtime_ns": 1791600967973029599,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_13_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 13,
+        "rows": 43196900,
+        "start_ms": 1123283894,
+        "end_ms": 1209677692,
+        "size": 3818747473,
+        "mtime_ns": 1791601011336569418,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_1_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 1,
+        "rows": 43196892,
+        "start_ms": 86483908,
+        "end_ms": 172877690,
+        "size": 3828999505,
+        "mtime_ns": 1791601055669123363,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_2_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 2,
+        "rows": 43196894,
+        "start_ms": 172883897,
+        "end_ms": 259277683,
+        "size": 3829638738,
+        "mtime_ns": 1791601099150668534,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_3_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 3,
+        "rows": 43196908,
+        "start_ms": 259283879,
+        "end_ms": 345677693,
+        "size": 3830965666,
+        "mtime_ns": 1791601138205159646,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_4_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 4,
+        "rows": 43196892,
+        "start_ms": 345683900,
+        "end_ms": 432077682,
+        "size": 3827473455,
+        "mtime_ns": 1791601177867659697,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_5_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 5,
+        "rows": 43196909,
+        "start_ms": 432083888,
+        "end_ms": 518477704,
+        "size": 3826873799,
+        "mtime_ns": 1791601216468147519,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_6_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 6,
+        "rows": 43196891,
+        "start_ms": 518483910,
+        "end_ms": 604877690,
+        "size": 3822972349,
+        "mtime_ns": 1791601249742568885,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_7_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 7,
+        "rows": 43196902,
+        "start_ms": 604883898,
+        "end_ms": 691277700,
+        "size": 3824982628,
+        "mtime_ns": 1791601283341995114,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_saline_X13_1_Days_8_interpolated.parquet": {
+        "mouse": "X13",
+        "day": 8,
+        "rows": 43196890,
+        "start_ms": 691283909,
+        "end_ms": 777677687,
+        "size": 3825474285,
+        "mtime_ns": 1791601316693418894,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_0_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 0,
         "rows": 43196198,
         "start_ms": 415306,
+        "end_ms": 86807700,
         "size": 3840830081,
-        "mtime_ns": 1791601355572913732
+        "mtime_ns": 1791601355572913732,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_11_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 11,
         "rows": 43196899,
         "start_ms": 950813911,
+        "end_ms": 1037207707,
         "size": 3832948391,
-        "mtime_ns": 1791601393415396160
+        "mtime_ns": 1791601393415396160,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_12_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 12,
         "rows": 43196898,
         "start_ms": 1037213916,
+        "end_ms": 1123607710,
         "size": 3834280503,
-        "mtime_ns": 1791601434210917041
+        "mtime_ns": 1791601434210917041,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_13_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 13,
         "rows": 43196900,
         "start_ms": 1123613917,
+        "end_ms": 1210007715,
         "size": 3828442149,
-        "mtime_ns": 1791601474625433821
+        "mtime_ns": 1791601474625433821,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_1_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 1,
         "rows": 43196905,
         "start_ms": 86813907,
+        "end_ms": 173207715,
         "size": 3842277841,
-        "mtime_ns": 1791601516438969228
+        "mtime_ns": 1791601516438969228,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_2_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 2,
         "rows": 43196891,
         "start_ms": 173213922,
+        "end_ms": 259607702,
         "size": 3843317336,
-        "mtime_ns": 1791601558081503133
+        "mtime_ns": 1791601558081503133,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_3_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 3,
         "rows": 43196902,
         "start_ms": 259613901,
+        "end_ms": 346007703,
         "size": 3841534829,
-        "mtime_ns": 1791601599297032186
+        "mtime_ns": 1791601599297032186,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_4_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 4,
         "rows": 43196897,
         "start_ms": 346013910,
+        "end_ms": 432407702,
         "size": 3840161998,
-        "mtime_ns": 1791601640605563006
+        "mtime_ns": 1791601640605563006,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_5_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 5,
         "rows": 43196908,
         "start_ms": 432413908,
+        "end_ms": 518807722,
         "size": 3837584845,
-        "mtime_ns": 1791601680654078144
+        "mtime_ns": 1791601680654078144,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_6_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 6,
         "rows": 43196888,
         "start_ms": 518813926,
+        "end_ms": 605207700,
         "size": 3834709748,
-        "mtime_ns": 1791601714008507527
+        "mtime_ns": 1791601714008507527,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_7_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 7,
         "rows": 43196904,
         "start_ms": 605213907,
+        "end_ms": 691607713,
         "size": 3833601326,
-        "mtime_ns": 1791601747421937969
+        "mtime_ns": 1791601747421937969,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X14_1_Days_8_interpolated.parquet": {
+        "mouse": "X14",
+        "day": 8,
         "rows": 43196902,
         "start_ms": 691613920,
+        "end_ms": 778007722,
         "size": 3838042684,
-        "mtime_ns": 1791601780820368499
+        "mtime_ns": 1791601780820368499,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_0_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 0,
         "rows": 43196187,
         "start_ms": 485614,
+        "end_ms": 86877986,
         "size": 3835315268,
-        "mtime_ns": 1791601817618843161
+        "mtime_ns": 1791601817618843161,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_11_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 11,
         "rows": 43196893,
         "start_ms": 950884196,
+        "end_ms": 1037277980,
         "size": 3842377541,
-        "mtime_ns": 1791601856318342667
+        "mtime_ns": 1791601856318342667,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_12_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 12,
         "rows": 43196892,
         "start_ms": 1037284192,
+        "end_ms": 1123677974,
         "size": 3839447472,
-        "mtime_ns": 1791601896030855563
+        "mtime_ns": 1791601896030855563,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_13_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 13,
         "rows": 43196892,
         "start_ms": 1123684181,
+        "end_ms": 1210077963,
         "size": 3840892206,
-        "mtime_ns": 1791601935236362203
+        "mtime_ns": 1791601935236362203,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_1_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 1,
         "rows": 43196890,
         "start_ms": 86884184,
+        "end_ms": 173277962,
         "size": 3836307567,
-        "mtime_ns": 1791601979727937477
+        "mtime_ns": 1791601979727937477,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_2_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 2,
         "rows": 43196908,
         "start_ms": 173284170,
+        "end_ms": 259677984,
         "size": 3832769969,
-        "mtime_ns": 1791602021659479941
+        "mtime_ns": 1791602021659479941,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_3_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 3,
         "rows": 43196894,
         "start_ms": 259684192,
+        "end_ms": 346077978,
         "size": 3835335175,
-        "mtime_ns": 1791602063166017160
+        "mtime_ns": 1791602063166017160,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_4_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 4,
         "rows": 43196894,
         "start_ms": 346084187,
+        "end_ms": 432477973,
         "size": 3833335179,
-        "mtime_ns": 1791602102669575838
+        "mtime_ns": 1791602102669575838,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
+      },
+      "251216_seizure_X15_1_Days_5_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 5,
+        "rows": 43196894,
+        "start_ms": 432484181,
+        "end_ms": 518877967,
+        "size": 3835075366,
+        "mtime_ns": 1791602143321186158,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_6_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 6,
         "rows": 43196893,
         "start_ms": 518884175,
+        "end_ms": 605277959,
         "size": 3832163707,
-        "mtime_ns": 1791602180186734900
+        "mtime_ns": 1791602180186734900,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_7_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 7,
         "rows": 43196909,
         "start_ms": 605284169,
+        "end_ms": 691677985,
         "size": 3832514126,
-        "mtime_ns": 1791602213924233410
+        "mtime_ns": 1791602213924233410,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       },
       "251216_seizure_X15_1_Days_8_interpolated.parquet": {
+        "mouse": "X15",
+        "day": 8,
         "rows": 43196892,
         "start_ms": 691684191,
+        "end_ms": 778077973,
         "size": 3839182399,
-        "mtime_ns": 1791602247225722262
+        "mtime_ns": 1791602247225722262,
+        "columns": [
+          "pi_time_ms",
+          "lfp",
+          "accX",
+          "accY",
+          "accZ",
+          "gyroX",
+          "gyroY",
+          "gyroZ",
+          "roll",
+          "pitch"
+        ]
       }
-    },
-    "feature_shape": [
-      1,
-      1,
-      55,
-      114
-    ],
-    "source_hz": 500,
-    "target_hz": 256,
-    "window_seconds": 28,
-    "preictal_minutes": 5,
-    "horizon_minutes": 5,
-    "postictal_minutes": 10,
-    "negative_exclusion": "absolute_time_across_files",
-    "event_selection_interval": [
-      10,
-      5
-    ],
-    "negative_preictal_minutes": 10,
-    "event_selection": "isolated history; entire positive interval avoids all other seizure exclusion zones",
-    "positive_exclusion": {
-      "version": 2,
-      "preictal_minutes": 0,
-      "postictal_minutes": 5,
-      "interval": [
-        5,
-        1
-      ],
-      "annotation_scope": "all events of same mouse, absolute time across files",
-      "target_event_exempt": true,
-      "selection": "reject entire event on any interval overlap"
     }
   },
   "files": {
-    "prepare.py": "4a7b5e6ed7071979f43615eb25470162f2bf8a591f2106f2138217b55783cb19",
-    "evaluate.py": "446f313d8e0e52d3aed870243efc9cc4295c1095eaca677dde3638959fa8e639",
+    "prepare.py": "e517e18aad12b2a6fda57e6d2f67f2f0f241c5cd68251d1f65dd66cabb138bee",
+    "evaluate.py": "f45e11ba27251145cb53d33187650f3afa54dd36d6bc45b70a3b047ee1a56882",
+    "source_data.py": "b34cc30e487feafbfe98192ddb1b3ca52b4549ce43373389a8dd94dea9bd6e4e",
     "research_protocol.py": "5a3797b34fe8381041f6bb07690482d9cb9a4abb0378801df55fbf3692090c0e",
     "utils/mouse_lfp.py": "e4853b31f428e393377f44d1a305447202de7f093c4d11b6c55a91ff2482b547",
     "utils/__init__.py": "ae63398cf171ddda8c2c722fa69a73c4b62abb30c1c7f43640eca91406fd56cc",
-    "SETTINGS_MouseLFP.json": "284b6dfc1f34a253c68397ebf7e21b6fcc024fad218fb02a357e6a217551bc64"
+    "SETTINGS_MouseLFP.json": "284b6dfc1f34a253c68397ebf7e21b6fcc024fad218fb02a357e6a217551bc64",
+    "train.py": "ba5b335978979afc80af06d5e981304969b193fb3675d4f73f80e873163a301c",
+    "models/cnn.py": "24f9be8d18584b603035cae4dbb5f61483d7523722a8709f182b606fe665c9df",
+    "models/__init__.py": "8da65f20eccafa43086b5dc745083332dd432cb3efa522bc5b9177ee14e6c5f3"
   }
 }

@@ -4,6 +4,7 @@ import argparse
 import csv
 import fcntl
 import importlib.util
+import hashlib
 import json
 import math
 import os
@@ -21,9 +22,10 @@ import torch
 from sklearn.metrics import (accuracy_score, average_precision_score,
                              confusion_matrix, log_loss, roc_auc_score)
 
-from prepare import (ROOT, TARGETS, frozen_hashes, load_split, parse_targets,
+from prepare import (ROOT, TARGETS, frozen_hashes, load_dataset, parse_targets,
                      sha256_file, verify_prepared)
 from research_protocol import write_json
+from source_data import DAY_SPLITS
 
 # Wall-clock watchdog includes import/preprocessing/evaluation overhead.
 STARTUP_ALLOWANCE_SECONDS = 180
@@ -58,7 +60,8 @@ def seed_everything(seed):
 
 def source_files(root):
     root = Path(root)
-    return [root / "train.py", root / "requirements.txt", root / "Dockerfile",
+    return [root / "train.py", root / "sample_pipeline.py", root / "input_pipeline.py",
+            root / "requirements.txt", root / "Dockerfile",
             *sorted((root / "models").rglob("*.py"))]
 
 
@@ -85,7 +88,7 @@ def git_commit():
 def import_recipe(source):
     # Preparation imports the legacy CNN. Resolve models against the saved recipe.
     for name in list(sys.modules):
-        if name == "models" or name.startswith("models."):
+        if name in {"input_pipeline", "sample_pipeline", "models"} or name.startswith("models."):
             del sys.modules[name]
     sys.path.insert(0, str(source))
     spec = importlib.util.spec_from_file_location("research_recipe", source / "train.py")
@@ -93,6 +96,26 @@ def import_recipe(source):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def validate_sample_table(rows, dataset, target, split):
+    required = ["mouse", "day", "raw_file", "start_row", "stop_row", "label"]
+    if not set(required).issubset(rows.columns) or rows[required].isna().any().any() or not len(rows):
+        raise ValueError("Missing candidate sample provenance")
+    if not rows.mouse.eq(target).all() or not rows.day.isin(DAY_SPLITS[split]).all():
+        raise ValueError("Candidate samples crossed the fixed mouse/day partition")
+    for column in ["day", "start_row", "stop_row", "label"]:
+        values = rows[column].to_numpy(dtype=np.float64)
+        if not np.isfinite(values).all() or not np.equal(values, np.floor(values)).all():
+            raise ValueError("Candidate sample indices and labels must be integers")
+    if set(rows.label.unique()) != {0, 1} or rows.duplicated(["raw_file", "start_row", "stop_row"]).any():
+        raise ValueError("Both classes and unique source windows are required")
+    for row in rows.itertuples():
+        source = dataset.sources.get(row.raw_file)
+        if (source is None or source["mouse"] != target or source["day"] != int(row.day)
+                or not 0 <= row.start_row < row.stop_row <= source["rows"]):
+            raise ValueError("Candidate sample provenance does not match the raw inventory")
+    return rows
 
 
 def prediction_metrics(labels, probabilities):
@@ -122,26 +145,48 @@ def worker(args):
     metadata = json.loads((args.experiment_dir / "experiment.json").read_text())
     if source_hashes(source) != metadata["source_hashes"]:
         raise ValueError("Experiment source snapshot changed")
+    seed_everything(args.seed)
     recipe = import_recipe(source)
+    sampler = importlib.import_module("sample_pipeline")
+    dataset = load_dataset(args.prepared_dir, args.data_dir)
+    tables, selection = sampler.build_tables(dataset, args.subject)
+    if set(tables) != set(DAY_SPLITS):
+        raise ValueError("A shared candidate recipe must construct all three day splits")
+    for part, table in tables.items():
+        validate_sample_table(table, dataset, args.subject, part)
+    lengths = {int(stop - start) for table in tables.values()
+               for start, stop in zip(table.start_row, table.stop_row)}
+    if len(lengths) != 1:
+        raise ValueError("Train, validation, and test must share the same window size")
     seed_everything(args.seed)
     device = resolve_device(args.device)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     work_dir = args.experiment_dir / args.subject
     work_dir.mkdir(exist_ok=True)
+    cache = args.experiment_dir.parent.parent / "sample-cache"
+    if not args.final:
+        write_json(work_dir / "sample_config.json", sampler.SAMPLE_CONFIG)
+        selection.to_csv(work_dir / "event_selection.csv", index=False)
+    summary = {part: dict(samples=len(table), positive_samples=int((table.label == 1).sum()),
+                         negative_samples=int((table.label == 0).sum()),
+                         window_rows=sorted((table.stop_row - table.start_row).unique().tolist()))
+               for part, table in tables.items()}
+    if not args.final:
+        write_json(work_dir / "sampling_summary.json", summary)
     if args.final:
         predictor = recipe.load_predictor(work_dir, device)
         split = "test"
     else:
-        train_raw, train_y = load_split(args.prepared_dir, args.subject, "train")
-        val_raw, val_y = load_split(args.prepared_dir, args.subject, "validation")
+        train_raw, train_y = sampler.materialize(dataset, args.subject, "train", tables["train"], cache)
+        val_raw, val_y = sampler.materialize(dataset, args.subject, "validation", tables["validation"], cache)
         predictor = recipe.fit(train_raw, train_y, val_raw, val_y,
                                work_dir=work_dir, device=device,
                                budget_seconds=args.budget_seconds, seed=args.seed)
         split = "validation"
-    raw, labels = load_split(args.prepared_dir, args.subject, split)
+    raw, labels = sampler.materialize(dataset, args.subject, split, tables[split], cache)
     result, probabilities = prediction_metrics(labels, predictor.predict_proba(raw))
-    provenance = pd.read_csv(args.prepared_dir / args.subject / f"{split}_windows.csv")
+    provenance = tables[split].copy()
     if not np.array_equal(provenance.label.to_numpy(), labels):
         raise ValueError("Prediction labels differ from fixed window provenance")
     provenance["probability"] = probabilities
@@ -149,6 +194,10 @@ def worker(args):
     provenance.to_csv(work_dir / f"predictions_{split}.csv", index=False)
     result["peak_vram_mb"] = (torch.cuda.max_memory_allocated(device) / 2 ** 20
                                if device.type == "cuda" else 0.0)
+    result["sample_config"] = sampler.SAMPLE_CONFIG
+    columns = ["mouse", "day", "raw_file", "start_row", "stop_row", "label"]
+    result["evaluation_protocol_sha256"] = hashlib.sha256(
+        provenance[columns].to_csv(index=False).encode()).hexdigest()
     write_json(work_dir / f"{split}_metrics.json", result)
 
 
@@ -165,13 +214,14 @@ def session_lock(run_dir):
 
 def session_config(args, manifest):
     import importlib.metadata
-    missing = set(args.targets) - set(manifest["subjects"])
+    missing = set(args.targets) - set(manifest["recordings"])
     if missing:
         raise ValueError(f"Prepare these subjects first: {sorted(missing)}")
-    return dict(version=2, prepared_manifest_sha256=sha256_file(args.prepared_dir / "manifest.json"),
+    return dict(version=4, prepared_manifest_sha256=sha256_file(args.prepared_dir / "manifest.json"),
                 targets=args.targets, budget_seconds=args.budget_seconds, seed=args.seed,
                 device=str(resolve_device(args.device)), score="macro_validation_accuracy",
                 threshold=0.5,
+                research_scope="source_data_and_input", cnn_input_shape=[1, 1, 55, 114],
                 min_improvement=MIN_IMPROVEMENT, frozen_code=frozen_hashes(),
                 runtime={name: importlib.metadata.version(name)
                          for name in ["torch", "numpy", "scipy", "stft", "scikit-learn"]},
@@ -206,6 +256,8 @@ def run_subject(args, experiment_dir, target, final=False):
                "--experiment-dir", str(experiment_dir), "--subject", target,
                "--device", args.device, "--seed", str(args.seed),
                "--budget-seconds", str(args.budget_seconds)]
+    if args.data_dir is not None:
+        command.extend(["--data-dir", str(args.data_dir)])
     if final:
         command.append("--final")
     log_path = experiment_dir / target / ("test.log" if final else "train.log")
@@ -276,6 +328,9 @@ def experiment(args):
                           validation_auc=float(np.mean([r["auc"] for r in results.values()])),
                           threshold=0.5, status=status,
                           scope=session["scope"], subjects=results, source_sha256=source_digest(hashes))
+            result["evaluation_protocol_sha256"] = hashlib.sha256(json.dumps(
+                {t: r["evaluation_protocol_sha256"] for t, r in results.items()},
+                sort_keys=True).encode()).hexdigest()
             write_json(experiment_dir / "result.json", result)
             if status == "keep":
                 write_json(best_path, result)
@@ -331,8 +386,9 @@ def restore(args):
     with session_lock(args.run_dir):
         frozen_hashes()
         session = json.loads((args.run_dir / "session.json").read_text())
-        if session.get("score") != "macro_validation_accuracy" or session.get("threshold") != 0.5:
-            raise ValueError("Archived session uses different scoring; restore from an accuracy session")
+        if (session.get("score") != "macro_validation_accuracy" or session.get("threshold") != 0.5
+                or session.get("research_scope") != "source_data_and_input"):
+            raise ValueError("Archived session has a different research scope; restore from a data-pipeline session")
         best = json.loads((args.run_dir / "best.json").read_text())
         experiment_dir = args.run_dir / "experiments" / best["experiment"]
         metadata = json.loads((experiment_dir / "experiment.json").read_text())
@@ -341,16 +397,9 @@ def restore(args):
             raise ValueError("Best recipe snapshot changed")
         backup = args.run_dir / "restore-backups" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         backup.mkdir(parents=True)
-        shutil.copy2(ROOT / "train.py", backup / "train.py")
-        shutil.copytree(ROOT / "models", backup / "models", ignore=shutil.ignore_patterns("__pycache__"))
-        shutil.copy2(source / "train.py", ROOT / "train.py")
-        # Only Python model files are in the editable research surface.
-        for path in (ROOT / "models").rglob("*.py"):
-            path.unlink()
-        for path in (source / "models").rglob("*.py"):
-            destination = ROOT / path.relative_to(source)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, destination)
+        for name in ["sample_pipeline.py", "input_pipeline.py"]:
+            shutil.copy2(ROOT / name, backup / name)
+            shutil.copy2(source / name, ROOT / name)
         print(f"Restored {best['experiment']}; previous recipe backed up at {backup}")
 
 
@@ -358,6 +407,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["experiment", "finalize", "restore", "_worker"])
     parser.add_argument("--prepared-dir", type=Path, default=Path("autoresearch-data"))
+    parser.add_argument("--data-dir", type=Path, help="Private continuous recordings and source labels")
     parser.add_argument("--run-dir", type=Path, default=Path("autoresearch-runs/default"))
     parser.add_argument("--targets", default=",".join(TARGETS))
     parser.add_argument("--device", default="cuda")

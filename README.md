@@ -1,117 +1,110 @@
-# MouseLFP autoresearch
+# MouseLFP data-pipeline autoresearch
 
-An autonomous research project built around the current seven-mouse experiment, following the [Karpathy autoresearch](https://github.com/karpathy/autoresearch) workflow: an AI agent edits research code, trains models, compares validation results, and keeps improvements before iterating.
+Explore how private continuous LFP recordings and event annotations should be turned into CNN inputs. Research changes sample construction, cleaning, signal representation, and layout while retaining the existing CNN and training controls.
 
-**The dataset, events, windows, and splits are fixed. Preprocessing, model architecture, and training methods are editable.**
+Use English for project documentation, comments, prompts, logs, and experiment descriptions.
 
-## Main entry points
+## Source data and research scope
 
-| File | Purpose |
+The source folder contains 168 approximately 24-hour signal recordings and the annotation file `seizure_epochs_pitime_seizure_w15_t0.3_min5_gap10.parquet`, with 2,773 event intervals. Recordings contain `pi_time_ms`, `lfp`, and motion channels; their filenames include `interpolated`. This inventory and label alignment do not establish that the signals are clean.
+
+| Fixed | Editable derived choices |
 | --- | --- |
-| `prepare.py` | Fixed data preparation: raw signal windows, labels, and source coordinates |
-| `train.py` | Agent-editable preprocessing, model, optimizer, and training loop; model code can also live in `models/` |
-| `program.md` | Research agent objectives, constraints, and experiment loop |
+| Original recordings and annotation file | Event eligibility and positive/negative sample construction |
+| Train Days 0-7, validation Days 8/11, test Days 12/13 | Window size, stride, prediction interval, and exclusion margins |
+| Existing SeizureCNN and input grid `(1, 1, 55, 114)` | Cleaning, filtering, resampling, representation, frequency selection, and layout |
+| Current trainer, optimizer, loss, seed, and comparison budget | Training-fitted normalization and input transformations |
 
-`evaluate.py` is the fixed evaluator. It snapshots source code, trains each mouse separately, computes validation metrics, and records `keep/discard/crash` outcomes and the best experiment. Research uses the validation set; `finalize` evaluates the test set separately.
+The seven modeled mice are X1/X2/X4/X9/X10/X14/X15. The historical 978-event cohort, 28-second windows, and previous fixed sample counts are a past data recipe, not immutable raw data.
 
-Use English throughout the project, including documentation, comments, prompts, log messages, and experiment descriptions.
+Each candidate's sampling policy, window size, cleaning, and feature transformations apply consistently to all three day splits. Normalization statistics are fitted on training inputs and reused for validation and test. This preserves a common processing rule while retaining genuine differences between recording days.
 
-## Fixed data protocol
+## Main files
 
-| Item | Current protocol |
+| File | Role |
 | --- | --- |
-| Dataset | MouseLFP, X1/X2/X4/X9/X10/X14/X15, 978 events |
-| Events per mouse | 137 / 259 / 59 / 267 / 61 / 169 / 26 |
-| Positive interval | **5-1 minutes before onset**, retaining the existing event eligibility and other-seizure exclusions |
-| Positive exclusion | Other seizures from onset through **5 minutes after their end**; reject the entire event if its interval overlaps |
-| Negative exclusion | Every annotated seizure from **10 minutes before onset** through **10 minutes after its end**, checked across files |
-| Negative matching | Unique windows from the same mouse and day, retaining the first eight entries of the existing ten-window grid |
-| Raw window | **28 seconds, 500 Hz, 14,000 samples** |
-| Window counts | **8 reference windows** per event per class; **14-second** training stride, **23 training windows** per class |
-| Train / validation / test | Days **0-7 / 8,11 / 12,13** |
-| Event counts | **649 / 168 / 161** |
-| Balanced window counts | **29,854 / 2,688 / 2,576** |
+| `prepare.py`, `source_data.py` | Fixed source inventory, annotation alignment, read-only recording access, and day partitions |
+| `sample_pipeline.py` | Editable sample construction, window policy, negative assignment, and signal cleaning |
+| `input_pipeline.py` | Editable features, normalization, and CNN input layout |
+| `train.py`, `models/cnn.py` | Fixed CNN and training controls |
+| `evaluate.py` | Fixed scoring, source snapshots, experiment records, restoration, and final testing |
+| `program.md` | Agent setup and autonomous experiment loop |
 
-`research_protocol.py` preserves the original trainer's window geometry and matching functions. `protocol.lock.json` records fixed code hashes, the annotation hash, and source file metadata. Prepared arrays, labels, and provenance tables have separate SHA-256 checks. Source data is mounted read-only.
+`protocol.lock.json` binds the raw source inventory, annotation hash, day splits, and fixed infrastructure. Both editable pipeline files are saved with each experiment. Candidate sample caches include source coordinates, labels, configuration, and checksums; original recordings stay read-only.
 
-Raw windows are stored as float32 and preprocessed by the research code. The initial recipe uses the original 256 Hz resampling, log-STFT, SeizureCNN, Adam, learning rate `5e-4`, batch size 32, and no additional normalization. It reloads the checkpoint with the highest validation accuracy at threshold `0.5`, breaking accuracy ties with lower validation loss. STFT and resampling are editable preprocessing choices; raw window durations and coordinates remain fixed.
+## Current control recipe
 
-## Quick start
+The CNN architecture remains unchanged. Controls retain Adam at `5e-4`, batch size 32, label smoothing `0.1`, and a 100-epoch cap. Checkpoints maximize validation accuracy at threshold `0.5`, using lower validation loss for ties.
 
-The local Docker image uses Python 3.11, PyTorch 2.5.1, and CUDA 12.4. Rebuild it when needed:
+The initial shared sample policy uses a 5-1-minute positive interval, 28-second windows, a 14-second grid, same-mouse/day negatives, ten-minute negative seizure margins, and the existing event-history exclusions. Dense windowing now applies equally to training, validation, and test. These sampling settings can be edited in `sample_pipeline.py`.
+
+The current input defaults retain 256 Hz resampling, log-STFT, and training-fitted frequency normalization. `arrange_input` maps alternative representations to the fixed CNN grid. `time_frequency` is the default layout; `frequency_time` transposes the matrix before resizing it to the same grid. A changed window size propagates to all splits before feature construction.
+
+## Setup and baseline
+
+The local Docker image uses Python 3.11, PyTorch 2.5.1, and CUDA 12.4. Rebuild when needed:
 
 ```bash
 docker build -t seizure-prediction-cnn:pytorch .
 ```
 
-Prepare all raw windows once, then run the baseline when research is requested:
+Prepare the source inventory once. This verifies source identity and annotation alignment; it does not generate a permanent fixed-window dataset:
 
 ```bash
 ./run_research.sh prepare
-export OUTPUT_DIR="$PWD/autoresearch-runs/my-study"
-./run_research.sh experiment --description 'baseline original STFT CNN Adam' > run.log 2>&1
+```
+
+When research is requested, use a fresh session for the new scope:
+
+```bash
+export OUTPUT_DIR="$PWD/autoresearch-runs/data-study"
+./run_research.sh experiment --description 'baseline shared data recipe' > run.log 2>&1
 cat "$OUTPUT_DIR/results.tsv"
 cat "$OUTPUT_DIR/best.json"
 ```
 
-The default training budget is **300 seconds per mouse**, or up to **35 minutes for seven mice, plus startup, preprocessing, and evaluation overhead**. The initial recipe also caps training at 100 epochs. Comparisons within a session use the same data, seed, budget, device, and runtime environment, recorded in `session.json`. Changes to these conditions require a new session.
-
-Default paths:
+Defaults:
 
 - `DATA_DIR=/data/users/jianchen/data/seizure_data`
-- `PREPARED_DIR=/data/users/jianchen/data/seizure_data-cache/autoresearch-raw-v1`
+- `PREPARED_DIR=/data/users/jianchen/data/seizure_data-cache/autoresearch-source-v1`
 - `OUTPUT_DIR=<project>/autoresearch-runs/default`
 - `IMAGE_NAME=seizure-prediction-cnn:pytorch`
 
-`TRAIN_CPU_THREADS` defaults to 4. Use `--device cpu` for CPU experiments. Explicit CUDA requests fail if GPU access is unavailable. Use `--dry-run` to inspect the launch command.
+`TRAIN_CPU_THREADS` defaults to 4. Use `--device cpu` for CPU execution and `--dry-run` to inspect commands. Each mouse has a 300-second training allowance; data assembly, preprocessing, and evaluation add overhead.
 
-To start agent-driven research, send the agent:
+Earlier prepared-window directories and model-search results remain archived. Start a fresh session after changing the research scope or runtime; those historical results are not relabeled as new-pipeline runs.
 
-> Read program.md, establish a baseline, then autonomously iterate on preprocessing, model architecture, and training methods while keeping the dataset, window parameters, and splits fixed. Record each validation result and keep improvements.
+To start the agent:
 
-The launcher runs one experiment. The AI agent reads `program.md`, generates hypotheses, and edits code.
+> Read program.md. Establish a baseline, then explore sample construction, cleaning, representation, normalization, and input layout. Apply each recipe consistently to train, validation, and test while preserving raw sources, day splits, the CNN, and training controls. Record validation accuracy and the associated data definition.
 
-## Comparison and recovery
+Project checks and documentation work leave the experiment loop inactive.
 
-The objective is the **arithmetic mean of the seven mice's window-level validation accuracies at threshold `0.5`**, with higher scores preferred. The first successful experiment is `keep`. Later experiments are `keep` only if the mean improves by more than `1e-6`; other successful experiments are `discard`, and failures or timeouts are `crash`. AUC remains a supporting metric in result JSON files. Accuracy-based experiments require a new session; previous AUC-based records remain archived.
+## Results and recovery
+
+The primary score is the arithmetic mean of seven mice's validation accuracies at threshold `0.5`. AUC, sensitivity, specificity, and loss are supporting metrics. The first successful run is `keep`; later accuracy must improve by more than `1e-6` for promotion. Failed attempts preserve the previous best.
+
+Each result records its sampling configuration, class counts, and evaluation-protocol fingerprint. Interpret scores with those definitions: changing eligibility, exclusions, or the prediction interval also changes the evaluated population or task.
 
 ```bash
-# Run a new experiment after editing train.py or models/*.py.
-./run_research.sh experiment --description 'train-only frequency z-score' > run.log 2>&1
+# After editing sample_pipeline.py or input_pipeline.py:
+./run_research.sh experiment --description 'shared window and input hypothesis' > run.log 2>&1
 
-# Restore the best recipe after a discard; current code is backed up first.
+# Recover the best pair of pipeline files, backing up current code first:
 ./run_research.sh restore
 ```
 
-The initial code also provides `train_frequency_zscore`, selectable through `PREPROCESS` in `train.py`. Fit all statistics on the training set only. Filtering, time-domain input, wavelets, other spectral representations, and arbitrary models are supported through the `fit`, `load_predictor`, and `predict_proba` interfaces.
+Worker logs, sampling summaries, event selection, histories, checkpoints, and predictions are under `$OUTPUT_DIR/experiments/<id>/X*/`.
 
-For training failures, inspect `$OUTPUT_DIR/experiments/<id>/status.json` and `X*/train.log`. Each experiment retains source code, weights, and predictions. Failed experiments preserve the previous best result. Experiments within a session run sequentially.
+## Final evaluation
 
-Dependencies and the Docker environment are editable. Rebuild the image and establish a matching baseline in a new session. Runtime versions and dependency recipes are recorded with experiments.
-
-## Smoke checks
-
-Use a separate X15 dataset and short budget. Results are labeled `smoke`:
-
-```bash
-export PREPARED_DIR=/data/users/jianchen/data/seizure_data-cache/autoresearch-raw-smoke-v1
-export OUTPUT_DIR="$PWD/autoresearch-runs/smoke"
-./run_research.sh prepare --targets X15
-./run_research.sh experiment --targets X15 --budget-seconds 2 \
-  --description 'pipeline smoke' > run.log 2>&1
-```
-
-Smoke checks reduce the subjects included in a run while preserving each selected mouse's original windows, events, and day splits. Full experiments use all seven mice and a separate session.
-
-## Final test evaluation
-
-After the search is complete and final evaluation is requested, run:
+After ending the search and requesting testing:
 
 ```bash
 ./run_research.sh finalize
 ```
 
-The evaluator verifies and loads the source snapshot, weights, and preprocessing state selected by `best.json`. It evaluates the original test Days 12/13 and writes `final.json` and each mouse's `predictions_test.csv`. Starting final evaluation seals the session. Rerun the command to resume an interrupted evaluation. Test results are excluded from recipe selection.
+Final evaluation uses the selected sampler, input transformation, training-fitted statistics, and saved weights on Days 12/13. It writes `final.json` and per-window predictions and seals the session. Interrupted final evaluations can resume. Test metrics never guide candidate selection.
 
 ## Local execution
 
@@ -123,8 +116,6 @@ python evaluate.py experiment --prepared-dir autoresearch-data \
   --run-dir autoresearch-runs/local --device cuda --description baseline
 ```
 
-## Original training entry points
+The original `train_mouse_lfp.py` / `run_train.sh` and `main.py` / `run.sh` remain available for reproducing earlier MouseLFP and CHBMIT/FB/Kaggle2014Pred workflows. Their old sample definitions are separate from the new research pipeline.
 
-`train_mouse_lfp.py` / `run_train.sh` retain the original seven-mouse training workflow and existing caches and results. `main.py` / `run.sh` retain training entry points for CHBMIT, FB, and Kaggle2014Pred.
-
-The initial CNN is based on Truong et al. (2018), *Convolutional neural networks for seizure prediction using intracranial and scalp electroencephalogram*, Neural Networks 105, 104-111. DOI: 10.1016/j.neunet.2018.04.018.
+The CNN is based on Truong et al. (2018), *Convolutional neural networks for seizure prediction using intracranial and scalp electroencephalogram*, Neural Networks 105, 104-111. DOI: 10.1016/j.neunet.2018.04.018. The agent workflow follows [Karpathy autoresearch](https://github.com/karpathy/autoresearch).

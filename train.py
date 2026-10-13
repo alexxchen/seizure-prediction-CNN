@@ -1,26 +1,23 @@
-"""Editable research code: raw-window preprocessing, model and optimization.
+"""Fixed CNN and training recipe for input-pipeline research.
 
 Contract: fit(...) returns an object with predict_proba(raw_windows).
 load_predictor(...) restores that object without retraining for final evaluation.
 """
 
-import hashlib
 import json
-import importlib.metadata
 import time
 from pathlib import Path
 
 import numpy as np
-import stft
 import torch
-from scipy.signal import resample_poly
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 from models.cnn import SeizureCNN
+from input_pipeline import FeatureDataset, features, normalization_stats
 
-# Research knobs. The initial recipe matches the existing log-STFT/CNN/Adam.
-PREPROCESS = dict(target_hz=256, frame_length=256, normalization="train_frequency_zscore", epsilon=1e-6)
+# Fixed controls for input comparisons. Preserve the current committed recipe.
+CNN_INPUT_SHAPE = (1, 1, 55, 114)
 BATCH_SIZE = 32
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY = 0.0
@@ -29,91 +26,11 @@ LABEL_SMOOTHING = 0.1
 GRADIENT_CLIP = float("inf")
 
 
-def preprocess_window(signal):
-    """Replace freely; the caller supplies exactly one fixed 28-second window."""
-    spectrum = stft.spectrogram(
-        resample_poly(signal, PREPROCESS["target_hz"], 500)[:, None],
-        framelength=PREPROCESS["frame_length"], centered=False)
-    if spectrum.ndim == 2:
-        spectrum = spectrum[:, :, None]
-    values = np.abs(np.transpose(spectrum, (2, 1, 0))) + PREPROCESS["epsilon"]
-    values = np.concatenate((values[:, :, 1:57], values[:, :, 64:117],
-                             values[:, :, 124:]), axis=-1)
-    return np.maximum(np.log10(values), 0)[None].astype(np.float32)
-
-
-def file_hash(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def features(raw, cache):
-    """Cache only deterministic, sample-local transforms under their source hash."""
-    # A source fingerprint prevents stale features after arbitrary code edits.
-    source_hash = file_hash(__file__)
-    input_hash = file_hash(raw.filename) if hasattr(raw, "filename") else hashlib.sha256(raw.tobytes()).hexdigest()
-    runtime = json.dumps({name: importlib.metadata.version(name)
-                          for name in ["numpy", "scipy", "stft"]}, sort_keys=True)
-    key = hashlib.sha256((source_hash + input_hash + runtime).encode()).hexdigest()
-    cache = Path(cache)
-    cache.mkdir(parents=True, exist_ok=True)
-    path = cache / f"{key}.npy"
-    if path.exists():
-        return np.load(path, mmap_mode="r", allow_pickle=False)
-    first = preprocess_window(np.asarray(raw[0]))
-    result = np.lib.format.open_memmap(str(path) + ".tmp", mode="w+",
-                                       dtype=np.float32, shape=(len(raw), *first.shape))
-    for index, signal in enumerate(raw):
-        sample = first if index == 0 else preprocess_window(np.asarray(signal))
-        if sample.shape != first.shape or not np.isfinite(sample).all():
-            raise ValueError("Invalid preprocessed window")
-        result[index] = sample
-    result.flush()
-    del result
-    Path(str(path) + ".tmp").replace(path)
-    return np.load(path, mmap_mode="r", allow_pickle=False)
-
-
-def normalization_stats(train_features):
-    mode = PREPROCESS["normalization"]
-    if mode == "none":
-        return np.array(0, dtype=np.float32), np.array(1, dtype=np.float32)
-    if mode != "train_frequency_zscore":
-        raise ValueError("Unknown normalization recipe")
-    # Fit per-frequency statistics exclusively on training windows.
-    total = np.zeros(train_features.shape[-1], dtype=np.float64)
-    squares = np.zeros_like(total)
-    count = 0
-    for start in range(0, len(train_features), 256):
-        batch = np.asarray(train_features[start:start + 256], dtype=np.float64)
-        axes = tuple(range(batch.ndim - 1))
-        total += batch.sum(axis=axes)
-        squares += np.square(batch).sum(axis=axes)
-        count += int(np.prod(batch.shape[:-1]))
-    mean = total / count
-    scale = np.sqrt(np.maximum(squares / count - mean ** 2, 0))
-    return mean.astype(np.float32), np.maximum(scale, PREPROCESS["epsilon"]).astype(np.float32)
-
-
-class FeatureDataset(Dataset):
-    def __init__(self, values, labels, mean, scale):
-        self.values, self.labels, self.mean, self.scale = values, labels, mean, scale
-
-    def __len__(self):
-        return len(self.values)
-
-    def __getitem__(self, index):
-        sample = np.array(self.values[index], dtype=np.float32, copy=True)
-        tensor = torch.from_numpy((sample - self.mean) / self.scale)
-        return tensor if self.labels is None else (tensor, int(self.labels[index]))
-
-
 def build_model(input_shape):
-    """Replace with any model that returns two class logits."""
-    return SeizureCNN(input_shape)
+    """Keep the existing CNN and its parameter count fixed across inputs."""
+    if tuple(input_shape) != CNN_INPUT_SHAPE:
+        raise ValueError(f"Input pipeline must produce {CNN_INPUT_SHAPE}; received {tuple(input_shape)}")
+    return SeizureCNN(CNN_INPUT_SHAPE)
 
 
 class Predictor:
@@ -139,7 +56,14 @@ def fit(train_raw, train_y, validation_raw, validation_y, work_dir, device,
     work_dir.mkdir(parents=True, exist_ok=True)
     cache = work_dir.parent.parent.parent / "feature-cache"
     train_features, val_features = features(train_raw, cache), features(validation_raw, cache)
+    for values in (train_features, val_features):
+        if values.ndim != 5 or tuple(values.shape[1:]) != CNN_INPUT_SHAPE:
+            raise ValueError(f"Input pipeline must preserve the CNN input shape {CNN_INPUT_SHAPE}")
     mean, scale = normalization_stats(train_features)
+    # Keep initialization independent of random draws made by data processing.
+    torch.manual_seed(seed)
+    if torch.device(device).type == "cuda":
+        torch.cuda.manual_seed_all(seed)
     model = build_model(train_features.shape[1:]).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE,
                                  weight_decay=WEIGHT_DECAY, betas=(0.9, 0.999), eps=1e-8)
