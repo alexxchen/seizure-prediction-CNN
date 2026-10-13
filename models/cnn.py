@@ -1,10 +1,11 @@
 """PyTorch implementation of the original patient-specific seizure CNN."""
 
+import json
 from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, average_precision_score
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -135,11 +136,14 @@ class ConvNN:
 
     def __init__(self, target, batch_size=16, nb_classes=2, epochs=2, mode="cv",
                  device="auto", checkpoint_dir="results/checkpoints", fold=None,
-                 num_workers=0, patience=10, seed=0):
+                 num_workers=0, patience=10, seed=0, monitor="train_val_loss",
+                 track_validation_metrics=False, history_path=None, early_stopping=True):
         if batch_size < 1 or epochs < 1 or num_workers < 0 or patience < 0:
             raise ValueError("Invalid batch size, epoch count, worker count, or patience")
         if nb_classes != 2:
             raise ValueError("This experiment uses two classes")
+        if monitor not in {"train_val_loss", "val_loss"}:
+            raise ValueError("Monitor must be train_val_loss or val_loss")
         self.target = str(target)
         self.batch_size = batch_size
         self.nb_classes = nb_classes
@@ -148,7 +152,11 @@ class ConvNN:
         self.device = resolve_device(device)
         self.num_workers = num_workers
         self.patience = patience
+        self.early_stopping = early_stopping
         self.seed = seed
+        self.monitor = monitor
+        self.track_validation_metrics = track_validation_metrics
+        self.history_path = Path(history_path) if history_path is not None else None
         suffix = f"_fold{fold}" if fold is not None else ""
         self.checkpoint_path = Path(checkpoint_dir) / f"weights_{self.target}_{mode}{suffix}.pt"
         self.history = []
@@ -172,6 +180,7 @@ class ConvNN:
     def _run_epoch(self, loader, training):
         self.model.train(training)
         total_loss, total_correct, count = 0.0, 0, 0
+        probabilities, targets = [], []
         with torch.set_grad_enabled(training):
             for inputs, labels in loader:
                 inputs = inputs.to(self.device, non_blocking=True)
@@ -190,8 +199,16 @@ class ConvNN:
                 total_loss += loss.item() * size
                 total_correct += (logits.argmax(dim=1) == labels).sum().item()
                 count += size
+                if not training and self.track_validation_metrics:
+                    probabilities.append(logits.detach().softmax(dim=1)[:, 1].cpu().numpy())
+                    targets.append(labels.cpu().numpy())
         if not count:
             raise ValueError("Training and validation splits must contain samples")
+        if not training and self.track_validation_metrics:
+            y, p = np.concatenate(targets), np.concatenate(probabilities)
+            self.validation_metrics = dict(val_auc=float(roc_auc_score(y, p)),
+                                           val_average_precision=float(average_precision_score(y, p)),
+                                           val_predicted_positive_fraction=float((p >= 0.5).mean()))
         return total_loss / count, total_correct / count
 
     def fit(self, X_train, Y_train, X_val=None, y_val=None):
@@ -208,12 +225,20 @@ class ConvNN:
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         best_score, wait = float("inf"), 0
         self.history = []
+        self.stop_reason = "max_epochs"
         for epoch in range(1, self.epochs + 1):
             train_loss, train_accuracy = self._run_epoch(train_loader, training=True)
             val_loss, val_accuracy = self._run_epoch(val_loader, training=False)
-            score = train_loss + val_loss
+            score = val_loss if self.monitor == "val_loss" else train_loss + val_loss
             self.history.append(dict(epoch=epoch, loss=train_loss, accuracy=train_accuracy,
                                      val_loss=val_loss, val_accuracy=val_accuracy))
+            if self.track_validation_metrics:
+                self.history[-1].update(self.validation_metrics)
+            if self.history_path is not None:
+                self.history_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary_history = self.history_path.with_suffix(".json.tmp")
+                temporary_history.write_text(json.dumps(self.history, indent=2) + "\n")
+                temporary_history.replace(self.history_path)
             print(f"Epoch {epoch}/{self.epochs} - loss: {train_loss:.6f} - accuracy: {train_accuracy:.4f} "
                   f"- val_loss: {val_loss:.6f} - val_accuracy: {val_accuracy:.4f}", flush=True)
             if score < best_score:
@@ -221,14 +246,17 @@ class ConvNN:
                 checkpoint = dict(model_state_dict=self.model.state_dict(),
                                   optimizer_state_dict=self.optimizer.state_dict(),
                                   input_shape=self.model.input_shape, nb_classes=self.nb_classes,
-                                  target=self.target, mode=self.mode, epoch=epoch, score=score)
+                                  target=self.target, mode=self.mode, epoch=epoch, score=score,
+                                  monitor=self.monitor)
                 temporary = self.checkpoint_path.with_suffix(".pt.tmp")
                 torch.save(checkpoint, temporary)
                 temporary.replace(self.checkpoint_path)
             else:
                 wait += 1
             # Match the original callback's combined loss and patience rule.
-            if score < 1e-3 or wait > self.patience:
+            patience_reached = wait >= self.patience if self.monitor == "val_loss" else wait > self.patience
+            if self.early_stopping and (score < 1e-3 or (wait > 0 and patience_reached)):
+                self.stop_reason = "early_stopping"
                 print(f"Early stopping at epoch {epoch}")
                 break
         self.load_trained_weights(self.checkpoint_path)
@@ -241,6 +269,8 @@ class ConvNN:
         if checkpoint["nb_classes"] != self.nb_classes:
             raise ValueError("Checkpoint class count does not match this model")
         self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.best_epoch = int(checkpoint["epoch"])
+        self.best_score = float(checkpoint["score"])
         print(f"Loaded checkpoint: {filename}")
         return self
 

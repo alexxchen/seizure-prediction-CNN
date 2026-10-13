@@ -2,6 +2,7 @@ torch==2.5.1
 numpy==1.26.4
 scipy==1.11.4
 pandas==2.2.3
+pyarrow==18.1.0
 scikit-learn==1.5.2
 mne==1.8.0
 matplotlib==3.9.2

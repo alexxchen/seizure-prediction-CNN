@@ -1,0 +1,7 @@
+{
+  "dataset": "MouseLFP",
+  "datadir": "/data/users/jianchen/data/seizure_data",
+  "cachedir": "/data/users/jianchen/data/seizure_data-cache",
+  "resultdir": "results/MouseLFP",
+  "annotations": "seizure_epochs_pitime_seizure_w15_t0.3_min5_gap10.parquet"
+}

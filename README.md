@@ -67,7 +67,7 @@ python main.py --dataset CHBMIT --mode cv --targets 20 --device cuda \
   --result-dir results/CHBMIT
 ```
 
-Supported datasets: `CHBMIT`, `FB`, and `Kaggle2014Pred`.
+Supported datasets: `CHBMIT`, `FB`, and `Kaggle2014Pred`; mouse training uses the entry below.
 `cv` holds out one seizure at a time. `test` holds out approximately the last third
 of seizure groups in the preprocessed sequence. Existing caches retain their
 stored seizure ordering. For newly generated data, the original file iteration
@@ -82,3 +82,44 @@ Predictions retain the original CSV headers and four-decimal formatting.
 Cross-validation checkpoints include fold numbers, and all checkpoints persist.
 
 Official installation reference: [PyTorch 2.5.1 builds](https://pytorch.org/get-started/previous-versions/#v251).
+
+## Seven-mouse LFP training
+
+```bash
+./run_train.sh
+```
+
+The single mouse training entry runs X1, X2, X4, X9, X10, X14 and X15 with
+`train_mouse_lfp.py`, `utils/mouse_lfp.py` and the existing `models/cnn.py`.
+The fixed protocol retains 978 events (137/259/59/267/61/169/26 respectively):
+
+- Positive interval: **5–1 minutes before onset**, avoiding other seizures and
+  **five minutes after their end**. Reject the whole event if its interval overlaps.
+- Negatives: avoid every annotation from **ten minutes before onset to ten minutes
+  after seizure end**, across source files; match unique windows within the same mouse/day.
+- Input: **28 seconds**, 500 Hz resampled to 256 Hz; original log-STFT features
+  of shape `(N, 1, 1, 55, 114)`, with no added normalization.
+- Each event supplies eight reference windows per class. A 14-second training
+  grid gives 23 windows per class per training event; validation/test keep eight.
+- Train Days 0–7; validation Days 8/11; test Days 12/13. Event counts are
+  649/168/161, with 29,854/2,688/2,576 balanced windows.
+- Existing CNN/Adam, seed 0, batch size 32, 100 epochs, early stopping disabled;
+  select and reload the checkpoint with minimum validation loss.
+
+Data and annotation paths are configured in `SETTINGS_MouseLFP.json`. Each launch
+writes a fresh `docker-output-mouse-training/<UTC-time>-<PID>/MouseLFP/` directory,
+including logs, configurations, source-window coordinates, exclusion checks,
+histories, checkpoints, predictions and summary metrics. Original caches remain
+compatible and previous result directories are retained.
+
+```bash
+./run_train.sh --dry-run
+./run_train.sh --targets X15 --epochs 1  # Short training check
+```
+
+`DATA_DIR`, `CACHE_DIR`, `OUTPUT_DIR`, `IMAGE_NAME` and `TRAIN_CPU_THREADS` override
+runner paths/image/CPU threads. CLI options are limited to subjects, device,
+epochs, batch size, seed and paths; the data protocol stays fixed.
+Use a fresh output directory for the simplified code; an incompatible saved
+run configuration is rejected. `run.sh`/`main.py` retain the original project
+training entry for the original datasets, while MouseLFP uses `run_train.sh`.
