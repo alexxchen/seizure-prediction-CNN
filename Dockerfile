@@ -16,4 +16,4 @@ RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt ninja==1.11.1.
     && chmod 1777 /tmp /var/tmp
 
 COPY . /workspace
-CMD ["python", "main.py", "--mode", "cv", "--dataset", "CHBMIT", "--targets", "20", "--device", "auto", "--data-dir", "/data/CHBMIT", "--cache-dir", "/cache/CHBMIT", "--result-dir", "/output/CHBMIT"]
+CMD ["python", "evaluate.py", "experiment", "--prepared-dir", "/prepared", "--run-dir", "/output"]

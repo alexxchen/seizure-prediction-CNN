@@ -1,0 +1,611 @@
+{
+  "protocol": {
+    "version": 1,
+    "dataset": "MouseLFP",
+    "targets": [
+      "X1",
+      "X2",
+      "X4",
+      "X9",
+      "X10",
+      "X14",
+      "X15"
+    ],
+    "event_counts": {
+      "X1": 137,
+      "X2": 259,
+      "X4": 59,
+      "X9": 267,
+      "X10": 61,
+      "X14": 169,
+      "X15": 26
+    },
+    "total_events": 978,
+    "positive_interval_minutes": [
+      5,
+      1
+    ],
+    "source_hz": 500,
+    "window_seconds": 28,
+    "window_rows": 14000,
+    "reference_windows_per_class": 8,
+    "negative_matching_grid": 10,
+    "training_stride_seconds": 14,
+    "training_windows_per_class": 23,
+    "day_splits": {
+      "train": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "validation": [
+        8,
+        11
+      ],
+      "test": [
+        12,
+        13
+      ]
+    },
+    "split_events": {
+      "train": 649,
+      "validation": 168,
+      "test": 161
+    },
+    "split_samples": {
+      "train": 29854,
+      "validation": 2688,
+      "test": 2576
+    },
+    "negative_exclusion_minutes": {
+      "before_onset": 10,
+      "after_end": 10
+    },
+    "positive_other_seizure_exclusion_minutes": {
+      "before_onset": 0,
+      "after_end": 5
+    },
+    "event_eligibility_interval_minutes": [
+      10,
+      5
+    ],
+    "score": "macro_validation_accuracy",
+    "direction": "maximize"
+  },
+  "dataset_signature": {
+    "version": 2,
+    "annotation_sha256": "b3c4b18adcdbb9e4db41422f64b848f71c31ee88ad470a31fe8e420fa9ad687f",
+    "sources": {
+      "250919_seizure_X1_1_Days_0_interpolated.parquet": {
+        "rows": 43196870,
+        "start_ms": 3753223660,
+        "size": 3837851469,
+        "mtime_ns": 1791595922755049966
+      },
+      "250919_seizure_X1_1_Days_11_interpolated.parquet": {
+        "rows": 43196881,
+        "start_ms": 4703623655,
+        "size": 3836087774,
+        "mtime_ns": 1791595955642713569
+      },
+      "250919_seizure_X1_1_Days_12_interpolated.parquet": {
+        "rows": 43196876,
+        "start_ms": 4790023645,
+        "size": 3837222021,
+        "mtime_ns": 1791595988814583199
+      },
+      "250919_seizure_X1_1_Days_13_interpolated.parquet": {
+        "rows": 43196898,
+        "start_ms": 4876423618,
+        "size": 3838091574,
+        "mtime_ns": 1791596022280433493
+      },
+      "250919_seizure_X1_1_Days_1_interpolated.parquet": {
+        "rows": 43196899,
+        "start_ms": 3839623612,
+        "size": 3841463456,
+        "mtime_ns": 1791596056374273588
+      },
+      "250919_seizure_X1_1_Days_2_interpolated.parquet": {
+        "rows": 43196885,
+        "start_ms": 3926023632,
+        "size": 3838716560,
+        "mtime_ns": 1791596090268084262
+      },
+      "250919_seizure_X1_1_Days_3_interpolated.parquet": {
+        "rows": 43196890,
+        "start_ms": 4012423622,
+        "size": 3839514095,
+        "mtime_ns": 1791596126147917571
+      },
+      "250919_seizure_X1_1_Days_4_interpolated.parquet": {
+        "rows": 43196896,
+        "start_ms": 4098823625,
+        "size": 3842291375,
+        "mtime_ns": 1791596160308580414
+      },
+      "250919_seizure_X1_1_Days_5_interpolated.parquet": {
+        "rows": 43196882,
+        "start_ms": 4185223638,
+        "size": 3839829094,
+        "mtime_ns": 1791596194540441211
+      },
+      "250919_seizure_X1_1_Days_6_interpolated.parquet": {
+        "rows": 43196887,
+        "start_ms": 4271623623,
+        "size": 3838927191,
+        "mtime_ns": 1791596230003200709
+      },
+      "250919_seizure_X1_1_Days_7_interpolated.parquet": {
+        "rows": 43196887,
+        "start_ms": 4358023625,
+        "size": 3839146539,
+        "mtime_ns": 1791596265119934030
+      },
+      "250919_seizure_X1_1_Days_8_interpolated.parquet": {
+        "rows": 43196888,
+        "start_ms": 4444423621,
+        "size": 3838238809,
+        "mtime_ns": 1791596300280650809
+      },
+      "250919_seizure_X2_1_Days_0_interpolated.parquet": {
+        "rows": 43196850,
+        "start_ms": 8061372952,
+        "size": 3829213843,
+        "mtime_ns": 1791596335593354270
+      },
+      "250919_seizure_X2_1_Days_11_interpolated.parquet": {
+        "rows": 43196893,
+        "start_ms": 9011772866,
+        "size": 3819464607,
+        "mtime_ns": 1791596371136046810
+      },
+      "250919_seizure_X2_1_Days_12_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 9098172873,
+        "size": 3823533780,
+        "mtime_ns": 1791596407311736786
+      },
+      "250919_seizure_X2_1_Days_13_interpolated.parquet": {
+        "rows": 43196893,
+        "start_ms": 9184572881,
+        "size": 3825023223,
+        "mtime_ns": 1791596442749399099
+      },
+      "250919_seizure_X2_1_Days_1_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 8147772864,
+        "size": 3838579921,
+        "mtime_ns": 1791596478426053213
+      },
+      "250919_seizure_X2_1_Days_2_interpolated.parquet": {
+        "rows": 43196895,
+        "start_ms": 8234172869,
+        "size": 3834379563,
+        "mtime_ns": 1791596513527685209
+      },
+      "250919_seizure_X2_1_Days_3_interpolated.parquet": {
+        "rows": 43196887,
+        "start_ms": 8320572879,
+        "size": 3827243657,
+        "mtime_ns": 1791596549599323514
+      },
+      "250919_seizure_X2_1_Days_4_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 8406972871,
+        "size": 3825132687,
+        "mtime_ns": 1791596583897920652
+      },
+      "250919_seizure_X2_1_Days_5_interpolated.parquet": {
+        "rows": 43196889,
+        "start_ms": 8493372883,
+        "size": 3826449867,
+        "mtime_ns": 1791596617992505402
+      },
+      "250919_seizure_X2_1_Days_6_interpolated.parquet": {
+        "rows": 43196882,
+        "start_ms": 8579772881,
+        "size": 3820962339,
+        "mtime_ns": 1791596651206067112
+      },
+      "250919_seizure_X2_1_Days_7_interpolated.parquet": {
+        "rows": 43196898,
+        "start_ms": 8666172856,
+        "size": 3820835364,
+        "mtime_ns": 1791596685929646533
+      },
+      "250919_seizure_X2_1_Days_8_interpolated.parquet": {
+        "rows": 43196897,
+        "start_ms": 8752572863,
+        "size": 3823908175,
+        "mtime_ns": 1791596719800204503
+      },
+      "250919_seizure_X4_1_Days_11_interpolated.parquet": {
+        "rows": 43196897,
+        "start_ms": 4703753995,
+        "size": 3832304756,
+        "mtime_ns": 1791596790892354477
+      },
+      "250919_seizure_X4_1_Days_12_interpolated.parquet": {
+        "rows": 43196878,
+        "start_ms": 4790154015,
+        "size": 3832851691,
+        "mtime_ns": 1791596828713955625
+      },
+      "250919_seizure_X4_1_Days_13_interpolated.parquet": {
+        "rows": 43196887,
+        "start_ms": 4876553995,
+        "size": 3832571794,
+        "mtime_ns": 1791596864748522112
+      },
+      "250919_seizure_X4_1_Days_1_interpolated.parquet": {
+        "rows": 43196889,
+        "start_ms": 3839754015,
+        "size": 3845888248,
+        "mtime_ns": 1791596903212120523
+      },
+      "250919_seizure_X4_1_Days_2_interpolated.parquet": {
+        "rows": 43196890,
+        "start_ms": 3926154017,
+        "size": 3842337626,
+        "mtime_ns": 1791596940426693783
+      },
+      "250919_seizure_X4_1_Days_3_interpolated.parquet": {
+        "rows": 43196883,
+        "start_ms": 4012554020,
+        "size": 3840320327,
+        "mtime_ns": 1791596977834264749
+      },
+      "250919_seizure_X4_1_Days_4_interpolated.parquet": {
+        "rows": 43196885,
+        "start_ms": 4098954004,
+        "size": 3831978967,
+        "mtime_ns": 1791597013560805466
+      },
+      "250919_seizure_X4_1_Days_5_interpolated.parquet": {
+        "rows": 43196885,
+        "start_ms": 4185354000,
+        "size": 3834077825,
+        "mtime_ns": 1791597046819305072
+      },
+      "250919_seizure_X4_1_Days_6_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 4271753995,
+        "size": 3831328354,
+        "mtime_ns": 1791597079980799842
+      },
+      "250919_seizure_X4_1_Days_7_interpolated.parquet": {
+        "rows": 43196890,
+        "start_ms": 4358153993,
+        "size": 3833639156,
+        "mtime_ns": 1791597113231292769
+      },
+      "250919_seizure_X4_1_Days_8_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 4444553989,
+        "size": 3834068799,
+        "mtime_ns": 1791597148016805269
+      },
+      "251111_seizure_X10_1_Days_0_interpolated.parquet": {
+        "rows": 43196887,
+        "start_ms": 4067740278,
+        "size": 3837747091,
+        "mtime_ns": 1791599492785149973
+      },
+      "251111_seizure_X10_1_Days_11_interpolated.parquet": {
+        "rows": 43196887,
+        "start_ms": 5018236731,
+        "size": 3835241040,
+        "mtime_ns": 1791599534047707173
+      },
+      "251111_seizure_X10_1_Days_12_interpolated.parquet": {
+        "rows": 43196904,
+        "start_ms": 5104636712,
+        "size": 3838943534,
+        "mtime_ns": 1791599577511293994
+      },
+      "251111_seizure_X10_1_Days_13_interpolated.parquet": {
+        "rows": 43196886,
+        "start_ms": 5191036728,
+        "size": 3841226997,
+        "mtime_ns": 1791599619571861783
+      },
+      "251111_seizure_X10_1_Days_1_interpolated.parquet": {
+        "rows": 43196894,
+        "start_ms": 4154140258,
+        "size": 3839037075,
+        "mtime_ns": 1791599661098422281
+      },
+      "251111_seizure_X10_1_Days_2_interpolated.parquet": {
+        "rows": 43196902,
+        "start_ms": 4240540251,
+        "size": 3839644069,
+        "mtime_ns": 1791599699917946175
+      },
+      "251111_seizure_X10_1_Days_3_interpolated.parquet": {
+        "rows": 43196886,
+        "start_ms": 4326940261,
+        "size": 3841286340,
+        "mtime_ns": 1791599738566467702
+      },
+      "251111_seizure_X10_1_Days_4_interpolated.parquet": {
+        "rows": 43196901,
+        "start_ms": 4413340246,
+        "size": 3843643382,
+        "mtime_ns": 1791599777031986704
+      },
+      "251111_seizure_X10_1_Days_6_interpolated.parquet": {
+        "rows": 43196901,
+        "start_ms": 4586140232,
+        "size": 3837592421,
+        "mtime_ns": 1791599844158892307
+      },
+      "251111_seizure_X10_1_Days_7_interpolated.parquet": {
+        "rows": 43196901,
+        "start_ms": 4672540242,
+        "size": 3835564216,
+        "mtime_ns": 1791599878213351680
+      },
+      "251111_seizure_X10_1_Days_8_interpolated.parquet": {
+        "rows": 43196902,
+        "start_ms": 4758940249,
+        "size": 3833100363,
+        "mtime_ns": 1791599918665897318
+      },
+      "251111_seizure_X9_1_Days_0_interpolated.parquet": {
+        "rows": 43196875,
+        "start_ms": 4073909516,
+        "size": 3835944058,
+        "mtime_ns": 1791599959212444181
+      },
+      "251111_seizure_X9_1_Days_11_interpolated.parquet": {
+        "rows": 43196881,
+        "start_ms": 5024409850,
+        "size": 3832893908,
+        "mtime_ns": 1791600001839019053
+      },
+      "251111_seizure_X9_1_Days_12_interpolated.parquet": {
+        "rows": 43196896,
+        "start_ms": 5110809817,
+        "size": 3832920421,
+        "mtime_ns": 1791600043482537331
+      },
+      "251111_seizure_X9_1_Days_13_interpolated.parquet": {
+        "rows": 43196895,
+        "start_ms": 5197209818,
+        "size": 3836277523,
+        "mtime_ns": 1791600083583920317
+      },
+      "251111_seizure_X9_1_Days_1_interpolated.parquet": {
+        "rows": 43196908,
+        "start_ms": 4160309466,
+        "size": 3837978638,
+        "mtime_ns": 1791600125209328931
+      },
+      "251111_seizure_X9_1_Days_2_interpolated.parquet": {
+        "rows": 43196900,
+        "start_ms": 4246709484,
+        "size": 3833176860,
+        "mtime_ns": 1791600162048699271
+      },
+      "251111_seizure_X9_1_Days_3_interpolated.parquet": {
+        "rows": 43196894,
+        "start_ms": 4333109489,
+        "size": 3835968659,
+        "mtime_ns": 1791600201837107761
+      },
+      "251111_seizure_X9_1_Days_4_interpolated.parquet": {
+        "rows": 43196894,
+        "start_ms": 4419509483,
+        "size": 3837134090,
+        "mtime_ns": 1791600241195519891
+      },
+      "251111_seizure_X9_1_Days_5_interpolated.parquet": {
+        "rows": 43196894,
+        "start_ms": 4505909477,
+        "size": 3834751464,
+        "mtime_ns": 1791600274564875139
+      },
+      "251111_seizure_X9_1_Days_6_interpolated.parquet": {
+        "rows": 43196909,
+        "start_ms": 4592309471,
+        "size": 3832989613,
+        "mtime_ns": 1791600307737233241
+      },
+      "251111_seizure_X9_1_Days_7_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 4678709495,
+        "size": 3833969414,
+        "mtime_ns": 1791600341731605012
+      },
+      "251111_seizure_X9_1_Days_8_interpolated.parquet": {
+        "rows": 43196896,
+        "start_ms": 4765109486,
+        "size": 3833523575,
+        "mtime_ns": 1791600378712014590
+      },
+      "251216_seizure_X14_1_Days_0_interpolated.parquet": {
+        "rows": 43196198,
+        "start_ms": 415306,
+        "size": 3840830081,
+        "mtime_ns": 1791601355572913732
+      },
+      "251216_seizure_X14_1_Days_11_interpolated.parquet": {
+        "rows": 43196899,
+        "start_ms": 950813911,
+        "size": 3832948391,
+        "mtime_ns": 1791601393415396160
+      },
+      "251216_seizure_X14_1_Days_12_interpolated.parquet": {
+        "rows": 43196898,
+        "start_ms": 1037213916,
+        "size": 3834280503,
+        "mtime_ns": 1791601434210917041
+      },
+      "251216_seizure_X14_1_Days_13_interpolated.parquet": {
+        "rows": 43196900,
+        "start_ms": 1123613917,
+        "size": 3828442149,
+        "mtime_ns": 1791601474625433821
+      },
+      "251216_seizure_X14_1_Days_1_interpolated.parquet": {
+        "rows": 43196905,
+        "start_ms": 86813907,
+        "size": 3842277841,
+        "mtime_ns": 1791601516438969228
+      },
+      "251216_seizure_X14_1_Days_2_interpolated.parquet": {
+        "rows": 43196891,
+        "start_ms": 173213922,
+        "size": 3843317336,
+        "mtime_ns": 1791601558081503133
+      },
+      "251216_seizure_X14_1_Days_3_interpolated.parquet": {
+        "rows": 43196902,
+        "start_ms": 259613901,
+        "size": 3841534829,
+        "mtime_ns": 1791601599297032186
+      },
+      "251216_seizure_X14_1_Days_4_interpolated.parquet": {
+        "rows": 43196897,
+        "start_ms": 346013910,
+        "size": 3840161998,
+        "mtime_ns": 1791601640605563006
+      },
+      "251216_seizure_X14_1_Days_5_interpolated.parquet": {
+        "rows": 43196908,
+        "start_ms": 432413908,
+        "size": 3837584845,
+        "mtime_ns": 1791601680654078144
+      },
+      "251216_seizure_X14_1_Days_6_interpolated.parquet": {
+        "rows": 43196888,
+        "start_ms": 518813926,
+        "size": 3834709748,
+        "mtime_ns": 1791601714008507527
+      },
+      "251216_seizure_X14_1_Days_7_interpolated.parquet": {
+        "rows": 43196904,
+        "start_ms": 605213907,
+        "size": 3833601326,
+        "mtime_ns": 1791601747421937969
+      },
+      "251216_seizure_X14_1_Days_8_interpolated.parquet": {
+        "rows": 43196902,
+        "start_ms": 691613920,
+        "size": 3838042684,
+        "mtime_ns": 1791601780820368499
+      },
+      "251216_seizure_X15_1_Days_0_interpolated.parquet": {
+        "rows": 43196187,
+        "start_ms": 485614,
+        "size": 3835315268,
+        "mtime_ns": 1791601817618843161
+      },
+      "251216_seizure_X15_1_Days_11_interpolated.parquet": {
+        "rows": 43196893,
+        "start_ms": 950884196,
+        "size": 3842377541,
+        "mtime_ns": 1791601856318342667
+      },
+      "251216_seizure_X15_1_Days_12_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 1037284192,
+        "size": 3839447472,
+        "mtime_ns": 1791601896030855563
+      },
+      "251216_seizure_X15_1_Days_13_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 1123684181,
+        "size": 3840892206,
+        "mtime_ns": 1791601935236362203
+      },
+      "251216_seizure_X15_1_Days_1_interpolated.parquet": {
+        "rows": 43196890,
+        "start_ms": 86884184,
+        "size": 3836307567,
+        "mtime_ns": 1791601979727937477
+      },
+      "251216_seizure_X15_1_Days_2_interpolated.parquet": {
+        "rows": 43196908,
+        "start_ms": 173284170,
+        "size": 3832769969,
+        "mtime_ns": 1791602021659479941
+      },
+      "251216_seizure_X15_1_Days_3_interpolated.parquet": {
+        "rows": 43196894,
+        "start_ms": 259684192,
+        "size": 3835335175,
+        "mtime_ns": 1791602063166017160
+      },
+      "251216_seizure_X15_1_Days_4_interpolated.parquet": {
+        "rows": 43196894,
+        "start_ms": 346084187,
+        "size": 3833335179,
+        "mtime_ns": 1791602102669575838
+      },
+      "251216_seizure_X15_1_Days_6_interpolated.parquet": {
+        "rows": 43196893,
+        "start_ms": 518884175,
+        "size": 3832163707,
+        "mtime_ns": 1791602180186734900
+      },
+      "251216_seizure_X15_1_Days_7_interpolated.parquet": {
+        "rows": 43196909,
+        "start_ms": 605284169,
+        "size": 3832514126,
+        "mtime_ns": 1791602213924233410
+      },
+      "251216_seizure_X15_1_Days_8_interpolated.parquet": {
+        "rows": 43196892,
+        "start_ms": 691684191,
+        "size": 3839182399,
+        "mtime_ns": 1791602247225722262
+      }
+    },
+    "feature_shape": [
+      1,
+      1,
+      55,
+      114
+    ],
+    "source_hz": 500,
+    "target_hz": 256,
+    "window_seconds": 28,
+    "preictal_minutes": 5,
+    "horizon_minutes": 5,
+    "postictal_minutes": 10,
+    "negative_exclusion": "absolute_time_across_files",
+    "event_selection_interval": [
+      10,
+      5
+    ],
+    "negative_preictal_minutes": 10,
+    "event_selection": "isolated history; entire positive interval avoids all other seizure exclusion zones",
+    "positive_exclusion": {
+      "version": 2,
+      "preictal_minutes": 0,
+      "postictal_minutes": 5,
+      "interval": [
+        5,
+        1
+      ],
+      "annotation_scope": "all events of same mouse, absolute time across files",
+      "target_event_exempt": true,
+      "selection": "reject entire event on any interval overlap"
+    }
+  },
+  "files": {
+    "prepare.py": "4a7b5e6ed7071979f43615eb25470162f2bf8a591f2106f2138217b55783cb19",
+    "evaluate.py": "446f313d8e0e52d3aed870243efc9cc4295c1095eaca677dde3638959fa8e639",
+    "research_protocol.py": "5a3797b34fe8381041f6bb07690482d9cb9a4abb0378801df55fbf3692090c0e",
+    "utils/mouse_lfp.py": "e4853b31f428e393377f44d1a305447202de7f093c4d11b6c55a91ff2482b547",
+    "utils/__init__.py": "ae63398cf171ddda8c2c722fa69a73c4b62abb30c1c7f43640eca91406fd56cc",
+    "SETTINGS_MouseLFP.json": "284b6dfc1f34a253c68397ebf7e21b6fcc024fad218fb02a357e6a217551bc64"
+  }
+}

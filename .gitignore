@@ -11,3 +11,6 @@ results/
 *.edf
 *.edf.seizures
 *.mat
+autoresearch-data/
+autoresearch-runs/
+run.log

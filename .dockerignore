@@ -18,3 +18,6 @@ docker-output*
 .venv
 *.pt
 *.pt.tmp
+autoresearch-data
+autoresearch-runs
+run.log
