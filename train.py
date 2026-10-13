@@ -20,12 +20,12 @@ from torch.utils.data import DataLoader, Dataset
 from models.cnn import SeizureCNN
 
 # Research knobs. The initial recipe matches the existing log-STFT/CNN/Adam.
-PREPROCESS = dict(target_hz=256, frame_length=256, normalization="none", epsilon=1e-6)
+PREPROCESS = dict(target_hz=256, frame_length=256, normalization="train_frequency_zscore", epsilon=1e-6)
 BATCH_SIZE = 32
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY = 0.0
 MAX_EPOCHS = 100
-LABEL_SMOOTHING = 0.0
+LABEL_SMOOTHING = 0.1
 GRADIENT_CLIP = float("inf")
 
 

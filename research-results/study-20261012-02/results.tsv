@@ -1,0 +1,6 @@
+experiment	commit	source_sha256	validation_accuracy	peak_vram_mb	wall_seconds	status	description
+20261013T062145671615Z	6917da5	2860652cb76baff77ddf5388bf3c0cd8b6d931ba1b689e1d534bd3a471ad3810	0.679747784	45.59765625	663.18	keep	baseline original STFT CNN Adam
+20261013T063326477261Z	6d4fbc8	8a46ddaa8210ed91e233e69205370577e2f9014875aa9fd69c48425fea029bfc	0.683669071	45.59765625	694.047	keep	train-only per-frequency z-score for spectral scale stability
+20261013T064531408509Z	18b2410	4ecb4a1dc0353e8e6973e1ed7140e0116964b245800566d23ecc34a5f982fbe0	0.675164228	45.59765625	719.92	discard	Adam learning rate 1e-4 to improve early checkpoint stability
+20261013T065819508450Z	9112d76	eb3511a6cc00011c7721ab8b841a8993900982355c572c1a82c7d4f731601148	0.686147476	45.59765625	752.002	keep	label smoothing 0.1 to reduce overconfident late-epoch fitting
+20261013T071246185814Z	7ba8d5a	5ccb313dfe0b43c854bb4f65acaef83307ef8b6df42a62e59dd487e687255168		0	231.406	crash	spectral mean and variability MLP for temporal phase robustness

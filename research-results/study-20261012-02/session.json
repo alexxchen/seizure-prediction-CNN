@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "prepared_manifest_sha256": "bb0df6fb8451329016138d33d1e80f02d071ccd3c5708dccca73d83bd0a6fe3a",
+  "targets": [
+    "X1",
+    "X2",
+    "X4",
+    "X9",
+    "X10",
+    "X14",
+    "X15"
+  ],
+  "budget_seconds": 300.0,
+  "seed": 0,
+  "device": "cuda",
+  "score": "macro_validation_accuracy",
+  "threshold": 0.5,
+  "min_improvement": 1e-06,
+  "frozen_code": {
+    "prepare.py": "4a7b5e6ed7071979f43615eb25470162f2bf8a591f2106f2138217b55783cb19",
+    "evaluate.py": "446f313d8e0e52d3aed870243efc9cc4295c1095eaca677dde3638959fa8e639",
+    "protocol.lock.json": "a6fdf37409813577a047ffe4212e123beb1ab96b2893446e838a43dc2178ba8a",
+    "research_protocol.py": "5a3797b34fe8381041f6bb07690482d9cb9a4abb0378801df55fbf3692090c0e",
+    "utils/mouse_lfp.py": "e4853b31f428e393377f44d1a305447202de7f093c4d11b6c55a91ff2482b547",
+    "utils/__init__.py": "ae63398cf171ddda8c2c722fa69a73c4b62abb30c1c7f43640eca91406fd56cc",
+    "SETTINGS_MouseLFP.json": "284b6dfc1f34a253c68397ebf7e21b6fcc024fad218fb02a357e6a217551bc64"
+  },
+  "runtime": {
+    "torch": "2.5.1+cu124",
+    "numpy": "1.26.4",
+    "scipy": "1.11.4",
+    "stft": "0.5.2",
+    "scikit-learn": "1.5.2"
+  },
+  "scope": "full-cohort"
+}

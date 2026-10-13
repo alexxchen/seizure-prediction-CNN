@@ -1,0 +1,186 @@
+{
+  "experiment": "20261013T065819508450Z",
+  "validation_accuracy": 0.6861474758664424,
+  "validation_auc": 0.7175966546274377,
+  "threshold": 0.5,
+  "status": "keep",
+  "scope": "full-cohort",
+  "subjects": {
+    "X1": {
+      "samples": 384,
+      "auc": 0.7894965277777777,
+      "average_precision": 0.7603338818763463,
+      "loss": 0.5617292648631294,
+      "accuracy": 0.7421875,
+      "sensitivity": 0.8125,
+      "specificity": 0.671875,
+      "confusion_matrix": [
+        [
+          129,
+          63
+        ],
+        [
+          36,
+          156
+        ]
+      ],
+      "peak_vram_mb": 37.01171875,
+      "wall_seconds": 105.556338687893,
+      "artifacts": {
+        "checkpoint.pt": "99906824334ffd37a363dc91b1cb406214b153123f0b34f1444827e6693c6e75",
+        "history.json": "ee8d6e389fee88add4fcbb74a40c2b7498e13e255d7c8937beb9f238b8443d8c"
+      }
+    },
+    "X2": {
+      "samples": 464,
+      "auc": 0.6925535077288942,
+      "average_precision": 0.6714885518523754,
+      "loss": 0.6403015046469688,
+      "accuracy": 0.6551724137931034,
+      "sensitivity": 0.6767241379310345,
+      "specificity": 0.6336206896551724,
+      "confusion_matrix": [
+        [
+          147,
+          85
+        ],
+        [
+          75,
+          157
+        ]
+      ],
+      "peak_vram_mb": 40.208984375,
+      "wall_seconds": 231.89338002097793,
+      "artifacts": {
+        "checkpoint.pt": "99efa37ad4a28308a2a060e4949d715366a9e8da5cf23b9c2643cd3a74e8411a",
+        "history.json": "5918ffbc9dfb99dbfb7d520369c0afd737c0df484e228d2bf38d5eb88ad7eb4b"
+      }
+    },
+    "X4": {
+      "samples": 96,
+      "auc": 0.6510416666666667,
+      "average_precision": 0.5811355435877081,
+      "loss": 0.6989353606970073,
+      "accuracy": 0.6666666666666666,
+      "sensitivity": 0.5833333333333334,
+      "specificity": 0.75,
+      "confusion_matrix": [
+        [
+          36,
+          12
+        ],
+        [
+          20,
+          28
+        ]
+      ],
+      "peak_vram_mb": 37.01171875,
+      "wall_seconds": 53.635022677946836,
+      "artifacts": {
+        "checkpoint.pt": "b83c9d3087c022f6d1b7b217dd704ac717ae6c0d330b7f89d6b5bc537c342b83",
+        "history.json": "4814535fd6e64aeb42d122cc8300d71f9dc047a31cbff807eab7ea234329f327"
+      }
+    },
+    "X9": {
+      "samples": 944,
+      "auc": 0.7554671789715599,
+      "average_precision": 0.7416891770355808,
+      "loss": 0.6066995797833624,
+      "accuracy": 0.6885593220338984,
+      "sensitivity": 0.6398305084745762,
+      "specificity": 0.7372881355932204,
+      "confusion_matrix": [
+        [
+          348,
+          124
+        ],
+        [
+          170,
+          302
+        ]
+      ],
+      "peak_vram_mb": 45.59765625,
+      "wall_seconds": 166.18667134316638,
+      "artifacts": {
+        "checkpoint.pt": "6380eafec94649ed0e8e85c89b4e608985563c65e286b8a1d44f1447148f32ab",
+        "history.json": "a1d52dc12dc22e007d4e3e3f44175f43a0b73b5beefed02da3990f93ae53d55c"
+      }
+    },
+    "X10": {
+      "samples": 112,
+      "auc": 0.5841836734693877,
+      "average_precision": 0.5917764143318784,
+      "loss": 0.6843444257807085,
+      "accuracy": 0.6160714285714286,
+      "sensitivity": 0.5892857142857143,
+      "specificity": 0.6428571428571429,
+      "confusion_matrix": [
+        [
+          36,
+          20
+        ],
+        [
+          23,
+          33
+        ]
+      ],
+      "peak_vram_mb": 45.59765625,
+      "wall_seconds": 58.7958602742292,
+      "artifacts": {
+        "checkpoint.pt": "bc2a703b169ce803489a70618b9151e33917c979c6c48c3bfcd260521799ae02",
+        "history.json": "ca70842b01a2ef426aba75c9e9dd13dce17d2d944e7d45a3b9f7798ade6fb17a"
+      }
+    },
+    "X14": {
+      "samples": 640,
+      "auc": 0.81953125,
+      "average_precision": 0.7819154994627611,
+      "loss": 0.514927367065037,
+      "accuracy": 0.746875,
+      "sensitivity": 0.80625,
+      "specificity": 0.6875,
+      "confusion_matrix": [
+        [
+          220,
+          100
+        ],
+        [
+          62,
+          258
+        ]
+      ],
+      "peak_vram_mb": 37.01171875,
+      "wall_seconds": 106.40270900307223,
+      "artifacts": {
+        "checkpoint.pt": "fe1dd56f25ca6fadf491dfeda212d059ca440886efa4dddf25654222adcc0ccc",
+        "history.json": "93cb0a4031150564903eb3df799659111f771c7865badd7a096fa5a811ab0bf1"
+      }
+    },
+    "X15": {
+      "samples": 48,
+      "auc": 0.7309027777777777,
+      "average_precision": 0.7283604433827742,
+      "loss": 0.682232885871508,
+      "accuracy": 0.6875,
+      "sensitivity": 0.5,
+      "specificity": 0.875,
+      "confusion_matrix": [
+        [
+          21,
+          3
+        ],
+        [
+          12,
+          12
+        ]
+      ],
+      "peak_vram_mb": 37.01171875,
+      "wall_seconds": 27.927095893071964,
+      "artifacts": {
+        "checkpoint.pt": "51c6d52b1e1b56a2a1eab9479e821c553fd3143f9e90cbe903561e23eb90b4ee",
+        "history.json": "f807cdb222c22c3c52f6c26477bf69f0d0406f075644c2006e4d2bc709d6455c"
+      }
+    }
+  },
+  "source_sha256": "eb3511a6cc00011c7721ab8b841a8993900982355c572c1a82c7d4f731601148"
+}

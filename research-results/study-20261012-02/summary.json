@@ -1,0 +1,24 @@
+{
+  "study": "study-20261012-02",
+  "status": "stopped_by_user",
+  "stopped_at": "2026-10-13T07:19:53.003343+00:00",
+  "selected_experiment": "20261013T065819508450Z",
+  "selected_recipe_commit": "9112d76",
+  "selected_source_sha256": "eb3511a6cc00011c7721ab8b841a8993900982355c572c1a82c7d4f731601148",
+  "baseline_validation_accuracy": 0.679747784,
+  "best_validation_accuracy": 0.6861474758664424,
+  "improvement_percentage_points": 0.6399691866442403,
+  "completed_experiments": 4,
+  "interrupted_experiment": {
+    "experiment": "20261013T071246185814Z",
+    "ledger_status": "crash",
+    "reason": "User requested that the autonomous search stop before all seven mice completed."
+  },
+  "final_test_evaluation": "not_requested",
+  "local_artifact_directory": "autoresearch-runs/study-20261012-02",
+  "recipe_files": [
+    "train.py",
+    "models/cnn.py",
+    "models/__init__.py"
+  ]
+}
