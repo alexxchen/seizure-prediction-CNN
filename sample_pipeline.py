@@ -10,8 +10,8 @@ import pandas as pd
 from source_data import DAY_SPLITS, SOURCE_HZ, file_hash
 
 # One policy applies to train, validation, and test. Source labels stay unchanged.
-SAMPLE_CONFIG = dict(window_seconds=28, stride_seconds=14, reference_windows=8,
-    positive_earlier_minutes=5, positive_later_minutes=1, event_history_minutes=10,
+SAMPLE_CONFIG = dict(window_seconds=112, stride_seconds=56, reference_windows=8,
+    positive_earlier_minutes=7, positive_later_minutes=3, event_history_minutes=10,
     positive_other_preictal_minutes=0, positive_other_postictal_minutes=5,
     negative_preictal_minutes=10, negative_postictal_minutes=10,
     negative_recording_scope="annotated_only")

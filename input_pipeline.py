@@ -16,21 +16,33 @@ from scipy.signal import resample_poly
 from torch.utils.data import Dataset
 
 PREPROCESS = dict(target_hz=256, frame_length=256,
-                  normalization="train_frequency_zscore", epsilon=1e-6,
-                  layout="time_frequency")
+                  normalization="none", epsilon=1e-6,
+                  layout="time_frequency", frequency_hz=[1, 40], row_interpolation="nearest",
+                  temporal_pooling="half_medians", waveform_centering="window_mean")
+
+
+def center_waveform(signal):
+    """Remove this window's constant offset while preserving its AC amplitude."""
+    signal = np.asarray(signal, dtype=np.float32)
+    return signal - np.float32(signal.mean(dtype=np.float64))
 
 
 def preprocess_window(signal):
     """Use the same signal representation for every split's candidate windows."""
     spectrum = stft.spectrogram(
-        resample_poly(signal, PREPROCESS["target_hz"], 500)[:, None],
+        resample_poly(center_waveform(signal), PREPROCESS["target_hz"], 500)[:, None],
         framelength=PREPROCESS["frame_length"], centered=False)
     if spectrum.ndim == 2:
         spectrum = spectrum[:, :, None]
     values = np.abs(np.transpose(spectrum, (2, 1, 0))) + PREPROCESS["epsilon"]
-    values = np.concatenate((values[:, :, 1:57], values[:, :, 64:117],
-                             values[:, :, 124:]), axis=-1)
+    frequencies = np.fft.rfftfreq(PREPROCESS["frame_length"],
+                                 d=1 / PREPROCESS["target_hz"])
+    low, high = PREPROCESS["frequency_hz"]
+    values = values[:, :, (frequencies >= low) & (frequencies <= high)]
     matrix = np.maximum(np.log10(values), 0)[0].astype(np.float32)
+    # Retain ordered spectral evolution while pooling transient frames.
+    matrix = np.stack([np.median(half, axis=0)
+                       for half in np.array_split(matrix, 2, axis=0)])
     return arrange_input(matrix)
 
 
@@ -46,8 +58,10 @@ def arrange_input(matrix):
         raise ValueError("Unknown input layout")
     tensor = torch.from_numpy(np.ascontiguousarray(matrix))[None, None]
     if matrix.shape != (55, 114):
-        tensor = torch.nn.functional.interpolate(tensor, size=(55, 114),
+        # Keep measured temporal profiles constant; interpolate frequency only.
+        tensor = torch.nn.functional.interpolate(tensor, size=(matrix.shape[0], 114),
                                                   mode="bilinear", align_corners=False)
+        tensor = torch.nn.functional.interpolate(tensor, size=(55, 114), mode="nearest")
     return tensor.numpy()
 
 
