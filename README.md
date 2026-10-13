@@ -113,7 +113,7 @@ After the search is complete and final evaluation is requested, run:
 
 The evaluator verifies and loads the source snapshot, weights, and preprocessing state selected by `best.json`. It evaluates the original test Days 12/13 and writes `final.json` and each mouse's `predictions_test.csv`. Starting final evaluation seals the session. Rerun the command to resume an interrupted evaluation. Test results are excluded from recipe selection.
 
-## Local execution and checks
+## Local execution
 
 ```bash
 python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
@@ -121,10 +121,7 @@ python -m pip install -r requirements.txt
 python prepare.py --output autoresearch-data
 python evaluate.py experiment --prepared-dir autoresearch-data \
   --run-dir autoresearch-runs/local --device cuda --description baseline
-python -m unittest discover -s tests -v
 ```
-
-Checks cover compatibility with the original window geometry, rejection of fixed protocol edits, baseline preprocessing compatibility, training-only normalization statistics, valid predictions, and fixed session conditions.
 
 ## Original training entry points
 

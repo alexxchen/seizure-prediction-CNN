@@ -13,4 +13,4 @@ The autonomous research workflow is documented in [program.md](program.md). Read
 - Explicit engineering maintenance tasks may modify infrastructure while preserving the existing dataset, window, and split protocol.
 - Start the research loop when the user requests experiments. Documentation changes and project checks do not start research.
 
-Local checks: `python -m unittest discover -s tests -v`. The Docker environment described in README is available on this machine.
+See README for local execution commands and the available Docker environment.
