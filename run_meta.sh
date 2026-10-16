@@ -8,8 +8,8 @@ if [[ "$action" == help || "$action" == --help || "$action" == -h ]]; then
 Usage: ./run_meta.sh prepare|train|validate|test|check [OPTIONS]
   prepare    Verify raw recordings and source annotation alignment
   train      Run a finite meta or pooled training job
-  validate   Replay selected per-mouse checkpoints on Days 8/11
-  test       Explicit final inference on Days 12/13
+  validate   Replay training-query metrics on Days 8/11
+  test       Replay held-out eval on Days 12/13 (also scored during training)
   check      Run unit and synthetic integration tests
 
 Train options: --config configs/meta.json --algorithm meta|pooled
@@ -26,7 +26,7 @@ case "$action" in prepare|train|validate|test|check) ;; *) echo "Unknown action:
 data_dir="${DATA_DIR:-/data/users/jianchen/data/seizure_data}"
 cache_dir="${CACHE_DIR:-/data/users/jianchen/data/seizure_data-cache/meta-learning}"
 prepared_dir="${PREPARED_DIR:-$cache_dir/prepared}"
-output_dir="${OUTPUT_DIR:-$project_dir/results/frontend-meta}"
+output_dir="${OUTPUT_DIR:-$project_dir/results/neural-stft-train-val-bn-meta}"
 image_name="${IMAGE_NAME:-seizure-prediction-cnn:pytorch}"
 device=auto
 dry_run=false

@@ -1,5 +1,6 @@
 """Finite training, exact checkpoint resumption, model selection, and inference."""
 
+import copy
 import importlib.metadata
 import json
 import random
@@ -10,12 +11,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from meta_learning.frontend import FRONTEND_CONFIG, SPECTRUM_CONFIG
+from meta_learning.frontend import FRONTEND_CONFIG, SPECTRUM_CONFIG, LogSTFTFrontend
 from meta_learning.adaptation import adapt_model, predict
 from meta_learning.algorithms import meta_objective, pooled_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json
 from meta_learning.config import Config
-from meta_learning.episodes import chronological_episodes, episode_batch
+from meta_learning.episodes import split_episode, episode_batch
 from meta_learning.model import CNN_INPUT_SHAPE, MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
@@ -55,27 +56,100 @@ def fit_progress(stage, **context):
     return lambda row: print(json.dumps(dict(stage=stage, **context, **row)), flush=True)
 
 
-def validate(initial, store, config, device, step, run_dir, identity):
-    subjects, predictions, adapted = {}, {}, {}
+def validate(initial, store, config, device, step, run_dir, identity, *, fit_stage="per_mouse_fit"):
+    """Fit on support only; score query and held-out eval with the same classifier.
+
+    The root aggregate/subjects are validation-query metrics used for selection.
+    The nested eval report is test-only inference and never selects a checkpoint.
+    """
+    subjects = {"validation": {}, "test": {}}
+    predictions, adapted = {}, {}
     for position, mouse in enumerate(config.targets):
-        training, validation = store.load(mouse, "train"), store.load(mouse, "validation")
+        training = store.load(mouse, "train")
         model, scale, fit = adapt_model(initial, training, config, device, config.seed + 10000 + position,
                                         return_diagnostics=True,
-                                        progress=fit_progress("per_mouse_fit", step=step, mouse=mouse))
-        metrics, probabilities = prediction_metrics(validation.labels, predict(
-            model, validation, scale, config.batch_size, device))
-        metrics["evaluation_protocol_sha256"] = validation.fingerprint
-        metrics["classifier_fit"] = fit
-        subjects[mouse] = metrics
-        table = validation.table.copy()
-        table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
-        predictions[mouse] = table
+                                        progress=fit_progress(fit_stage, step=step, mouse=mouse))
+        predictions[mouse], fingerprints = {}, {}
+        for part, role in [("validation", "query"), ("test", "eval")]:
+            values = store.load(mouse, part)
+            if (values.split != part or values.mouse != mouse or
+                    not values.table.day.isin(DAY_SPLITS[part]).all()):
+                raise ValueError(f"Invalid {part} partition for {mouse}")
+            metrics, probabilities = prediction_metrics(values.labels, predict(
+                model, values, scale, config.batch_size, device))
+            metrics.update(evaluation_protocol_sha256=values.fingerprint, classifier_fit=fit)
+            subjects[part][mouse] = metrics
+            fingerprints[f"{part}_fingerprint"] = values.fingerprint
+            table = values.table.copy()
+            table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
+            predictions[mouse][part] = table
+            fit_progress(f"{fit_stage}_{role}", step=step, mouse=mouse)(
+                {key: metrics[key] for key in ["samples", "loss", "accuracy", "auc", "sensitivity", "specificity"]})
         adapted[mouse] = dict(model=cpu_state(model), scale=scale, mouse=mouse,
-                              training_fingerprint=training.fingerprint, validation_fingerprint=validation.fingerprint,
+                              training_fingerprint=training.fingerprint, **fingerprints,
                               identity=identity, step=step, config=config.to_dict(), classifier_fit=fit)
-    aggregate = {key: float(np.mean([row[key] for row in subjects.values()]))
-                 for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
-    return dict(step=step, aggregate=aggregate, subjects=subjects), predictions, adapted
+    reports = {}
+    for part, role in [("validation", "query"), ("test", "eval")]:
+        aggregate = {key: float(np.mean([row[key] for row in subjects[part].values()]))
+                     for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
+        reports[role] = dict(step=step, split=part, role=role, aggregate=aggregate, subjects=subjects[part])
+    return dict(reports["query"], eval=reports["eval"]), predictions, adapted
+
+
+def save_predictions(directory, predictions, query_metrics, eval_metrics):
+    for part, metrics in [("validation", query_metrics), ("test", eval_metrics)]:
+        predictions[part].to_csv(directory / f"predictions_{part}.csv", index=False)
+        write_json(directory / f"{part}_metrics.json", metrics)
+
+
+def query_improves(score, previous):
+    """Checkpoint selection uses only the seven-mouse mean query log loss."""
+    return previous is None or score["loss"] < previous["loss"]
+
+
+def log_stft_baseline(initial, store, config, device, run_dir, identity):
+    """Fit the pure log-STFT control before outer training; reuse it on resume."""
+    directory = Path(run_dir) / "baseline" / "log_stft"
+    report_path = directory / "report.json"
+    if report_path.exists():
+        report = json.loads(report_path.read_text())
+        if report["identity"] != identity or set(report["subjects"]) != set(config.targets):
+            raise ValueError("Pure log-STFT baseline belongs to another run")
+        for record in report["adapted_models"].values():
+            if file_hash(Path(run_dir) / record["path"]) != record["sha256"]:
+                raise ValueError("Pure log-STFT baseline checkpoint changed")
+        reused = True
+    else:
+        baseline = copy.deepcopy(initial)
+        baseline.frontend = LogSTFTFrontend().to(device)
+        started = time.monotonic()
+        # Preserve outer training RNG streams, including shuffled inner batches.
+        with torch.random.fork_rng():
+            report, predictions, adapted = validate(baseline, store, config, device, 0,
+                run_dir, identity, fit_stage="baseline_log_stft_fit")
+        records = {}
+        for mouse, state in adapted.items():
+            path = directory / mouse / "checkpoint.pt"
+            state["frontend_type"] = "pure_log_stft"
+            save_checkpoint(path, state)
+            records[mouse] = dict(path=str(path.relative_to(run_dir)), sha256=file_hash(path))
+            save_predictions(path.parent, predictions[mouse], report["subjects"][mouse],
+                             report["eval"]["subjects"][mouse])
+        report.update(identity=identity, frontend_type="pure_log_stft", frontend_parameters=0,
+                      description="Fixed log1p STFT, average pooling and bilinear resize; no neural residual; "
+                                  "fresh per-mouse CNN trained on Days 0-7; query Days 8/11; eval Days 12/13",
+                      adapted_models=records, wall_seconds=time.monotonic() - started)
+        # Publish the completion marker only after all per-mouse artifacts exist.
+        write_json(report_path, report)
+        reused = False
+    for mouse, metrics in report["subjects"].items():
+        keys = ["samples", "loss", "accuracy", "auc", "sensitivity", "specificity"]
+        print(json.dumps(dict(stage="baseline_log_stft_mouse", step=0, mouse=mouse,
+                              reused=reused, query={key: metrics[key] for key in keys},
+                              eval={key: report["eval"]["subjects"][mouse][key] for key in keys})), flush=True)
+    print(json.dumps(dict(stage="baseline_log_stft", step=0, reused=reused,
+                          aggregate=report["aggregate"], eval=report["eval"]["aggregate"])), flush=True)
+    return report
 
 
 def train_run(config, store, run_dir, prepared_dir, device, resume=False):
@@ -90,28 +164,33 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 previous["runtime"] != runtime_identity(device)):
             raise ValueError("Resume requires identical config, sources, and runtime")
     training = {mouse: store.load(mouse, "train") for mouse in config.targets}
-    episodes = {mouse: chronological_episodes(split, config.min_support_days, config.query_days)
-                for mouse, split in training.items()}
+    queries = {mouse: store.load(mouse, "validation") for mouse in config.targets}
+    episodes = {mouse: split_episode(training[mouse], queries[mouse]) for mouse in config.targets}
     provenance = dict(config=config.to_dict(), source_sha256=source_hashes(),
                       source_inventory_sha256=digest(verify_prepared(prepared_dir)["signature"]),
                       training_fingerprints={mouse: split.fingerprint for mouse, split in training.items()},
+                      query_fingerprints={mouse: split.fingerprint for mouse, split in queries.items()},
+                      split_roles=dict(support="train", query="validation", eval="test"),
+                      selection_criterion="Minimum mean query log loss; test metrics are reporting only",
                       runtime=runtime_identity(device), sample_config=sample_pipeline.SAMPLE_CONFIG,
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),
                       spectrum_config=SPECTRUM_CONFIG, frontend_config=FRONTEND_CONFIG,
+                      startup_baseline="Step 0: pure log1p STFT without neural residual; matched support-only CNN fitting, validation query and test eval",
                       day_splits=DAY_SPLITS, cnn_input_shape=list(CNN_INPUT_SHAPE),
                       task_schedule=dict(mice="Every configured mouse exactly once per outer step",
                                          mouse_order=list(config.targets), tasks_per_step=len(config.targets),
-                                         episodes="Uniform within each mouse", gradient_reduction="Mean per mouse"),
-                      normalization="Support-only mean power per episode; Days 0-7 mean power for adaptation",
-                      batchnorm="Fixed running statistics; trainable affine weights; no query-batch dependence",
-                      inner_updates=(f"Epoch-based task-local CNN {config.inner_optimizer}; support-only stability"
+                                         episodes="One fixed train-support/validation-query task per mouse", gradient_reduction="Mean per mouse"),
+                      normalization="Identity (scale=1) before the neural frontend; no fitted statistics",
+                      batchnorm="Support batch statistics and per-task running EMA; query/test use frozen support EMA; full EMA hypergradient",
+                      inner_updates=(f"Task-local CNN {config.inner_optimizer}; exactly {config.inner_epochs} full epochs"
                                      if config.algorithm == "meta" else "None"),
                       outer_updates=("Shared frontend only" if config.algorithm == "meta" else
                                      "Frontend and auxiliary CNN; CNN discarded before per-mouse fitting"),
                       classifier_seed=config.seed,
-                      adaptation="Fresh CNN; frozen frontend; same epoch solver and patience as inner training",
-                      inner_stopping="Support eval loss only; completed stopping epoch; min/max epochs and consecutive relative-loss stability",
-                      meta_gradient=("Full unrolled frontend hypergradient with RNG-preserving segment checkpointing; discrete stopping held fixed"
+                      frontend_seed=config.seed,
+                      adaptation="Fresh CNN; frozen frontend; same fixed epoch budget as inner training",
+                      inner_stopping="Fixed epoch budget; no early stopping; final epoch classifier; support metrics are diagnostic only",
+                      meta_gradient=("Full unrolled frontend hypergradient through every fixed-epoch update with RNG-preserving segment checkpointing"
                                      if config.algorithm == "meta" else "Direct supervised gradient"))
     identity = digest(provenance)
     if resume:
@@ -134,8 +213,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
             destination.write_bytes((ROOT / name).read_bytes())
         if source_hashes() != provenance["source_sha256"]:
             raise ValueError("Source files changed while snapshotting")
-    write_json(run_dir / "episodes.json", {mouse: [task.describe() for task in tasks]
-                                         for mouse, tasks in episodes.items()})
+    write_json(run_dir / "episodes.json", {mouse: [task.describe()] for mouse, task in episodes.items()})
     seed_everything(config.seed)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -175,6 +253,9 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
         current = torch.cuda.max_memory_allocated(device) / 2**20 if device.type == "cuda" else 0.0
         return max(previous_peak, current)
     try:
+        write_json(run_dir / "status.json", dict(status="baseline_log_stft", step=start_step,
+                   target_steps=config.outer_steps))
+        baseline = log_stft_baseline(model, store, config, device, run_dir, identity)
         for step in range(start_step + 1, config.outer_steps + 1):
             write_json(run_dir / "status.json", dict(status="training", step=step - 1,
                        active_step=step, target_steps=config.outer_steps))
@@ -182,8 +263,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
             losses, inner_reports = [], []
             for task_index, mouse in enumerate(config.targets):
                 # Accumulate every mouse's equally weighted gradient before one outer update.
-                episode = episodes[mouse][int(rng.integers(len(episodes[mouse])))]
-                support, query = episode_batch(training[mouse], episode, config, rng, device)
+                episode = episodes[mouse]
+                support, query = episode_batch(training[mouse], queries[mouse], episode, config, rng, device)
                 if config.algorithm == "meta":
                     loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
                         progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse))
@@ -192,7 +273,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                     write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
                     inner_reports.append(fit)
                     fit_progress("query_task", step=step, task=task_index, mouse=mouse,
-                                 query_days=list(episode.query_days))(fit["query"])
+                                 query_split="validation", query_days=list(episode.query_days))(fit["query"])
                 else:
                     loss = pooled_objective(model, support, query, config)
                 if not torch.isfinite(loss):
@@ -207,21 +288,29 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
                 aggregate = {key: float(np.mean([metrics[key] for metrics in subjects.values()]))
                              for key in ["loss", "accuracy"]}
-                row["query"] = dict(aggregate=aggregate, subjects=subjects)
+                row["query"] = dict(split="validation", role="query", timing="before_outer_update",
+                                    aggregate=aggregate, subjects=subjects)
                 fit_progress("query_step", step=step)(row["query"])
-                row["inner"] = dict(mean_epochs=float(np.mean([fit["epochs_run"] for fit in inner_reports])),
+                row["inner"] = dict(epochs_per_task=config.inner_epochs,
+                                    mean_epochs=float(np.mean([fit["epochs_run"] for fit in inner_reports])),
                                     mean_selected_epoch=float(np.mean([fit["selected_epoch"] for fit in inner_reports])),
                                     optimizer_steps=sum(fit["optimizer_steps"] for fit in inner_reports),
-                                    plateau_tasks=sum(fit["plateau_reached"] for fit in inner_reports),
-                                    max_epoch_tasks=sum(fit["stop_reason"] == "max_epochs" for fit in inner_reports))
+                                    fixed_epoch_tasks=sum(fit["stop_reason"] == "fixed_epochs" for fit in inner_reports))
             improved = False
             if step % config.eval_every == 0 or step == config.outer_steps:
                 report, predictions, adapted = validate(model, store, config, device, step, run_dir, identity)
-                row["validation"] = report["aggregate"]
+                row["query_refit"] = report["aggregate"]
+                row["eval"] = report["eval"]["aggregate"]
+                row["query_minus_log_stft"] = {
+                    key: report["aggregate"][key] - baseline["aggregate"][key]
+                    for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
                 score = report["aggregate"]
                 previous = selection["aggregate"] if selection else None
-                improved = previous is None or score["accuracy"] > previous["accuracy"] or (
-                    score["accuracy"] == previous["accuracy"] and score["loss"] < previous["loss"])
+                improved = query_improves(score, previous)
+                row["eval_minus_log_stft"] = {
+                    key: report["eval"]["aggregate"][key] - baseline["eval"]["aggregate"][key]
+                    for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
+                fit_progress("query_eval_step", step=step)(dict(query=score, eval=row["eval"]))
                 if improved:
                     directory = run_dir / "selected" / f"step-{step:06d}"
                     models = {}
@@ -229,14 +318,16 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                         path = directory / mouse / "checkpoint.pt"
                         save_checkpoint(path, state)
                         models[mouse] = dict(path=str(path.relative_to(run_dir)), sha256=file_hash(path))
-                        predictions[mouse].to_csv(path.parent / "predictions_validation.csv", index=False)
-                        write_json(path.parent / "validation_metrics.json", report["subjects"][mouse])
-                    selection = dict(report, identity=identity, adapted_models=models)
+                        save_predictions(path.parent, predictions[mouse], report["subjects"][mouse],
+                                         report["eval"]["subjects"][mouse])
+                    selection = dict(report, identity=identity, adapted_models=models,
+                                     criterion="Minimum mean query log loss; test metrics are reporting only")
                     save_checkpoint(directory / "frontend.pt", dict(frontend=cpu_state(model.frontend),
                                     identity=identity, step=step))
-                write_json(run_dir / "validation" / f"step-{step:06d}.json", report)
+                write_json(run_dir / "query" / f"step-{step:06d}.json", {k: v for k, v in report.items() if k != "eval"})
+                write_json(run_dir / "eval" / f"step-{step:06d}.json", report["eval"])
             history.append(row)
-            if step % config.checkpoint_every == 0 or "validation" in row:
+            if step % config.checkpoint_every == 0 or "query_refit" in row:
                 save_checkpoint(run_dir / "checkpoints" / "last.pt",
                                 checkpoint(model, optimizer, step, rng, history, selection, identity,
                                            elapsed_seconds + time.monotonic() - started, peak_memory()))
@@ -244,7 +335,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 write_json(run_dir / "selection.json", selection)
             write_json(run_dir / "history.json", history)
             write_json(run_dir / "status.json", dict(status="training", step=step, target_steps=config.outer_steps))
-            if step == 1 or step % 10 == 0 or "validation" in row:
+            if step == 1 or step % 10 == 0 or "query_refit" in row:
                 print(json.dumps(row), flush=True)
         write_json(run_dir / "status.json", dict(status="complete", step=config.outer_steps,
                    training_wall_seconds=elapsed_seconds + time.monotonic() - started,
@@ -255,7 +346,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
     return selection
 
 
-def evaluate_run(store, run_dir, device, split="validation"):
+def evaluate_run(store, run_dir, device, split="test"):
     if split not in {"validation", "test"}:
         raise ValueError("Evaluation split must be validation or test")
     run_dir = Path(run_dir)
@@ -281,8 +372,8 @@ def evaluate_run(store, run_dir, device, split="validation"):
         model = MetaModel().to(device)
         model.load_state_dict(state["model"])
         values = store.load(mouse, split)
-        if split == "validation" and values.fingerprint != state["validation_fingerprint"]:
-            raise ValueError("Validation sample provenance changed")
+        if values.fingerprint != state[f"{split}_fingerprint"]:
+            raise ValueError(f"{split} sample provenance changed")
         metrics, probabilities = prediction_metrics(values.labels, predict(model, values, state["scale"], config.batch_size, device))
         metrics["evaluation_protocol_sha256"] = values.fingerprint
         metrics["classifier_fit"] = state["classifier_fit"]
@@ -293,7 +384,7 @@ def evaluate_run(store, run_dir, device, split="validation"):
         table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
         table.to_csv(destination / "predictions.csv", index=False)
         write_json(destination / "metrics.json", metrics)
-    report = dict(split=split, selected_step=selection["step"], identity=metadata["identity"],
+    report = dict(split=split, role="eval" if split == "test" else "query", selected_step=selection["step"], identity=metadata["identity"],
                   aggregate={key: float(np.mean([row[key] for row in subjects.values()]))
                              for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]},
                   subjects=subjects, evaluation_protocol_sha256=digest(

@@ -8,7 +8,7 @@ from meta_learning.common import resolve_device, write_json
 from meta_learning.config import Config
 from meta_learning.data import DataStore, FeatureSplit
 from meta_learning.engine import evaluate_run, train_run
-from meta_learning.episodes import chronological_episodes
+from meta_learning.episodes import split_episode
 from prepare import parse_targets, source_settings
 import sample_pipeline
 
@@ -32,7 +32,7 @@ def train_main():
     parser.add_argument("--steps", type=int, help="Override the finite outer-step budget")
     parser.add_argument("--targets", type=parse_targets)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--plan-only", action="store_true", help="Audit chronological tasks without reading waveforms or training")
+    parser.add_argument("--plan-only", action="store_true", help="Audit fixed train-support/validation-query tasks without reading waveforms or training")
     args = parser.parse_args()
     config = Config.load(args.config).to_dict()
     for name, value in [("algorithm", args.algorithm), ("outer_steps", args.steps), ("targets", args.targets)]:
@@ -46,10 +46,11 @@ def train_main():
         tasks = {}
         for mouse in config.targets:
             tables, _ = sample_pipeline.build_tables(store.dataset, mouse)
-            table = tables["train"]
-            split = FeatureSplit(mouse, "train", None, table.label.to_numpy(), table)
-            tasks[mouse] = [task.describe() for task in chronological_episodes(
-                split, config.min_support_days, config.query_days)]
+            splits = {part: FeatureSplit(mouse, part, None, table.label.to_numpy(), table)
+                      for part, table in tables.items()}
+            tasks[mouse] = [dict(split_episode(splits["train"], splits["validation"]).describe(),
+                                 eval_split="test", eval_days=sorted(splits["test"].table.day.unique().tolist()),
+                                 eval_samples=len(splits["test"].labels))]
         write_json(args.run_dir / "episodes.json", tasks)
         print(json.dumps(dict(training=False, episodes={mouse: len(rows) for mouse, rows in tasks.items()})))
         return
@@ -60,8 +61,8 @@ def train_main():
 def evaluate_main():
     parser = argparse.ArgumentParser(description="Run inference with selected per-mouse checkpoints; no fitting")
     data_arguments(parser)
-    parser.add_argument("--split", choices=["validation", "test"], default="validation",
-                        help="Test evaluation requires an explicit --split test")
+    parser.add_argument("--split", choices=["validation", "test"], default="test",
+                        help="test: held-out eval (default); validation: training query replay")
     args = parser.parse_args()
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, args.run_dir / "data")
     result = evaluate_run(store, args.run_dir, resolve_device(args.device), args.split)

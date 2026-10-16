@@ -9,7 +9,7 @@ from meta_learning.inner import classifier_loss, fit_classifier
 
 
 def meta_objective(model, support, query, config, *, return_diagnostics=False, progress=None):
-    """Fit a private CNN to support patience, then differentiate query loss.
+    """Fit a private CNN for a fixed epoch budget, then differentiate query loss.
 
     Only the frontend is a meta-parameter. Every completed inner optimizer update is
     differentiable; activation checkpointing reduces stored activations without

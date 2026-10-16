@@ -39,19 +39,39 @@ def training_classifier(reference, config):
     training = copy.deepcopy(reference).train()
     for layer in training.modules():
         if isinstance(layer, AxisBatchNorm):
-            layer.eval()
+            layer.differentiable_stats = True
         elif isinstance(layer, torch.nn.Dropout):
             layer.p = config.classifier_dropout
     return training
 
 
+class _SupportForward(torch.nn.Module):
+    """Return functional buffers before functional_call restores module state."""
+
+    def __init__(self, classifier):
+        super().__init__()
+        self.classifier = classifier
+
+    def forward(self, features):
+        logits = self.classifier(features)
+        return logits, tuple(self.classifier.buffers())
+
+
 def update_segment(training, names, buffers, features, labels, state, batches, config, differentiable, step=0):
     count = len(names)
+    optimizer_size = count * (3 if config.inner_optimizer == "adam" else 2)
     parameters, momentum = state[:count], state[count:2 * count]
-    variance = state[2 * count:]
+    variance = state[2 * count:optimizer_size]
+    # Functional BatchNorm replaces these values out of place on every support
+    # forward. Include the EMA state in the trajectory and its hypergradient.
+    buffers = dict(zip(buffers, state[optimizer_size:]))
+    forward = _SupportForward(training)
     for indices in batches:
-        logits = functional_call(training, (dict(zip(names, parameters)), buffers),
-                                 (features[indices],), strict=True)
+        logits, updated_buffers = functional_call(forward,
+            ({f"classifier.{name}": value for name, value in zip(names, parameters)},
+             {f"classifier.{name}": value for name, value in buffers.items()}),
+            (features[indices],), strict=True)
+        buffers = dict(zip(buffers, updated_buffers))
         loss = F.cross_entropy(logits, labels[indices], label_smoothing=config.label_smoothing)
         gradients = torch.autograd.grad(loss, parameters, create_graph=differentiable)
         norm = torch.linalg.vector_norm(torch.stack([gradient.norm() for gradient in gradients]))
@@ -80,7 +100,8 @@ def update_segment(training, names, buffers, features, labels, state, batches, c
             parameters = tuple(value.detach().requires_grad_(True) for value in parameters)
             momentum = tuple(value.detach() for value in momentum)
             variance = tuple(value.detach() for value in variance)
-    return (*parameters, *momentum, *variance)
+            buffers = {name: value.detach() for name, value in buffers.items()}
+    return (*parameters, *momentum, *variance, *buffers.values())
 
 
 def run_fit(reference, features, labels, config, differentiable, progress, segments=None):
@@ -92,6 +113,7 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
     velocity = tuple(torch.zeros_like(parameter) for parameter in weights)
     variance = tuple(torch.zeros_like(parameter) for parameter in weights) if config.inner_optimizer == "adam" else ()
     buffers = {name: value.detach().clone() for name, value in reference.named_buffers()}
+    optimizer_size = len(names) * (3 if config.inner_optimizer == "adam" else 2)
     if not differentiable:
         features = features.detach()
 
@@ -106,10 +128,9 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
 
     initial_loss, initial_accuracy = measure(weights)
     best_loss = previous_loss = initial_loss
-    best_epoch, stable, steps = 0, 0, 0
+    best_epoch, steps = 0, 0
     history = []
-    stop_reason = "max_epochs"
-    for epoch in range(1, config.inner_max_epochs + 1):
+    for epoch in range(1, config.inner_epochs + 1):
         order = torch.randperm(len(labels), device=features.device)
         batches = tuple(order[start:start + config.batch_size]
                         for start in range(0, len(labels), config.batch_size))
@@ -117,36 +138,37 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
         for start in range(0, len(batches), segment_size):
             selected = batches[start:start + segment_size]
             if segments is not None:
-                segments.append(dict(state=tuple(value.detach().cpu().clone() for value in (*weights, *velocity, *variance)),
+                segments.append(dict(state=tuple(value.detach().cpu().clone() for value in
+                    (*weights, *velocity, *variance, *buffers.values())),
                     batches=tuple(indices.cpu() for indices in selected), cpu_rng=torch.get_rng_state(),
                     cuda_rng=torch.cuda.get_rng_state(features.device) if features.is_cuda else None, step=steps))
-            state = update_segment(training, names, buffers, features, labels, (*weights, *velocity, *variance),
+            state = update_segment(training, names, buffers, features, labels,
+                                   (*weights, *velocity, *variance, *buffers.values()),
                                    selected, config, differentiable, step=steps)
-            weights, velocity, variance = state[:len(names)], state[len(names):2 * len(names)], state[2 * len(names):]
+            weights, velocity = state[:len(names)], state[len(names):2 * len(names)]
+            variance = state[2 * len(names):optimizer_size]
+            buffers = dict(zip(buffers, state[optimizer_size:]))
             steps += len(selected)
         loss, accuracy = measure(weights)
         if loss < best_loss:
             best_loss, best_epoch = loss, epoch
         relative_change = abs(previous_loss - loss) / max(abs(previous_loss), 1e-12)
-        stable = stable + 1 if relative_change <= config.inner_relative_tolerance else 0
         previous_loss = loss
         row = dict(epoch=epoch, optimizer_steps=steps, support_loss=loss,
                    support_accuracy=accuracy, best_support_loss=best_loss,
-                   relative_loss_change=relative_change, stable_epochs=stable)
+                   relative_loss_change=relative_change)
         history.append(row)
-        reached_patience = epoch >= config.inner_min_epochs and stable >= config.inner_patience
-        if progress and (epoch == 1 or epoch % config.inner_log_every == 0 or
-                         reached_patience or epoch == config.inner_max_epochs):
+        if progress and (epoch == config.inner_epochs or
+                         (config.inner_log_every > 0 and (epoch == 1 or epoch % config.inner_log_every == 0))):
             progress(dict(row, selected_epoch=epoch))
-        if reached_patience:
-            stop_reason = "support_plateau"
-            break
-    report = dict(samples=len(labels), epochs_run=len(history), optimizer_steps=steps,
+    report = dict(samples=len(labels), epochs_requested=config.inner_epochs,
+                  epochs_run=len(history), optimizer_steps=steps,
                   selected_epoch=len(history), best_epoch=best_epoch, initial_support_loss=initial_loss,
                   optimizer=config.inner_optimizer, classifier_dropout=config.classifier_dropout,
+                  batchnorm="Support batch statistics during training; support EMA during evaluation",
                   initial_support_accuracy=initial_accuracy, last_support_accuracy=history[-1]["support_accuracy"],
                   best_support_loss=best_loss, last_support_loss=history[-1]["support_loss"],
-                  stop_reason=stop_reason, plateau_reached=stop_reason == "support_plateau",
+                  stop_reason="fixed_epochs",
                   history=history)
     return ClassifierFit(dict(zip(names, weights)), buffers, report)
 
@@ -154,7 +176,7 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
 class _ReplayClassifierFit(torch.autograd.Function):
     """Reverse the complete optimizer trajectory a segment at a time.
 
-    Forward fitting saves detached CNN and optimizer-state boundaries in CPU memory.
+    Forward fitting saves detached CNN, optimizer, and BatchNorm boundaries in CPU memory.
     Backward propagates adjoints through every segment, accumulating the exact
     support-feature gradient. GPU activation memory depends on segment length,
     while CPU checkpoint storage grows with the number of segments. No gradient
@@ -172,20 +194,28 @@ class _ReplayClassifierFit(torch.autograd.Function):
         ctx.save_for_backward(features, labels, *boundaries)
         ctx.training = training_classifier(reference, config)
         ctx.names = tuple(fit.parameters)
-        ctx.buffers, ctx.config = fit.buffers, config
+        ctx.buffer_names, ctx.config = tuple(fit.buffers), config
+        ctx.optimizer_size = len(ctx.names) * (3 if config.inner_optimizer == "adam" else 2)
         report.update(fit.report)
-        return tuple(value.detach() for value in fit.parameters.values())
+        return tuple(value.detach() for value in (*fit.parameters.values(), *fit.buffers.values()))
 
     @staticmethod
     @once_differentiable
-    def backward(ctx, *weight_gradients):
+    def backward(ctx, *output_gradients):
         features, labels, *boundaries = ctx.saved_tensors
         count, device = len(ctx.names), features.device
         # Saved boundary values also supply shapes for unused output gradients.
         reference_state = boundaries[-ctx.state_size:]
-        adjoints = tuple(gradient if gradient is not None else torch.zeros_like(reference_state[i], device=device)
-                         for i, gradient in enumerate(weight_gradients))
-        adjoints += tuple(torch.zeros_like(value, device=device) for value in reference_state[count:])
+
+        def output_adjoint(index, value):
+            gradient = output_gradients[index]
+            return gradient if gradient is not None else torch.zeros_like(value, device=device)
+
+        adjoints = tuple(output_adjoint(i, reference_state[i]) for i in range(count))
+        adjoints += tuple(torch.zeros_like(value, device=device)
+                          for value in reference_state[count:ctx.optimizer_size])
+        adjoints += tuple(output_adjoint(count + i, value)
+                          for i, value in enumerate(reference_state[ctx.optimizer_size:]))
         feature_gradient = torch.zeros_like(features)
         devices = [device.index if device.index is not None else torch.cuda.current_device()] if features.is_cuda else []
         with torch.random.fork_rng(devices=devices), torch.enable_grad():
@@ -198,7 +228,7 @@ class _ReplayClassifierFit(torch.autograd.Function):
                 initial = tuple(value.to(device).detach().requires_grad_(True) for value in state)
                 inputs = features.detach().requires_grad_(True)
                 batches = tuple(indices.to(device) for indices in segment["batches"])
-                final = update_segment(ctx.training, ctx.names, ctx.buffers, inputs, labels,
+                final = update_segment(ctx.training, ctx.names, ctx.buffer_names, inputs, labels,
                                        initial, batches, ctx.config, True, step=segment["step"])
                 gradients = torch.autograd.grad(final, (inputs, *initial), grad_outputs=adjoints,
                                                 allow_unused=True)
@@ -211,10 +241,10 @@ class _ReplayClassifierFit(torch.autograd.Function):
 
 
 def fit_classifier(reference, features, labels, config, *, differentiable, progress=None):
-    """Train full epochs to support patience/cap; optionally replay exact gradients.
+    """Train exactly the configured full epochs; optionally replay exact gradients.
 
-    CNN weights and all optimizer moments persist within a task. Stopping is discrete and held
-    fixed during differentiation. A zero checkpoint interval enables ordinary
+    CNN weights, optimizer moments, and support BatchNorm statistics persist within a task. Support metrics
+    are diagnostic only; the final epoch supplies the classifier. A zero checkpoint interval enables ordinary
     full unrolling for small reference checks; final per-mouse fitting needs no
     hypergradient or stored training trajectory.
     """
@@ -222,7 +252,8 @@ def fit_classifier(reference, features, labels, config, *, differentiable, progr
         raise ValueError("Classifier fitting requires nonempty matching support features/labels")
     if differentiable and config.inner_checkpoint_steps:
         report = {}
-        weights = _ReplayClassifierFit.apply(features, labels, reference, config, progress, report)
-        buffers = {name: value.detach().clone() for name, value in reference.named_buffers()}
-        return ClassifierFit(dict(zip((name for name, _ in reference.named_parameters()), weights)), buffers, report)
+        state = _ReplayClassifierFit.apply(features, labels, reference, config, progress, report)
+        count = sum(1 for _ in reference.parameters())
+        return ClassifierFit(dict(zip((name for name, _ in reference.named_parameters()), state[:count])),
+                             dict(zip((name for name, _ in reference.named_buffers()), state[count:])), report)
     return run_fit(reference, features, labels, config, differentiable, progress)

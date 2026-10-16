@@ -1,4 +1,4 @@
-"""Lazy split loading, source audits, cached fixed spectra, and train-only scaling."""
+"""Lazy split loading, source audits, and cached identity-scaled STFT magnitudes."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from meta_learning.frontend import fixed_power
+from meta_learning.frontend import fixed_spectrum
 from meta_learning.common import digest, signal_audit, validate_sample_table, write_json
 from prepare import load_dataset
 import sample_pipeline
@@ -16,7 +16,7 @@ import sample_pipeline
 class FeatureSplit:
     mouse: str
     split: str
-    power: np.ndarray
+    spectrum: np.ndarray
     labels: np.ndarray
     table: object
 
@@ -26,13 +26,14 @@ class FeatureSplit:
         return digest(self.table[columns].to_dict("records"))
 
     def scale(self, indices=None):
-        values = self.power if indices is None else self.power[indices]
-        return max(float(np.mean(values, dtype=np.float64)), 1e-12)
+        # Preserve absolute spectral amplitude before the neural log transform.
+        # Retain the saved-scale interface for personalization and inference.
+        return 1.0
 
     def batch(self, indices, scale, device):
-        if not np.isfinite(scale) or scale <= 0:
-            raise ValueError("Normalization scale must be finite and positive")
-        values = np.array(self.power[indices], dtype=np.float32, copy=True) / np.float32(scale)
+        if scale != 1.0:
+            raise ValueError("The neural STFT frontend requires identity normalization")
+        values = np.array(self.spectrum[indices], dtype=np.float32, copy=True)
         labels = np.array(self.labels[indices], dtype=np.int64, copy=True)
         return torch.from_numpy(values).to(device), torch.from_numpy(labels).to(device)
 
@@ -68,8 +69,8 @@ class DataStore:
         raw, labels = sample_pipeline.materialize(self.dataset, mouse, split, table,
                                                   self.cache_dir / "samples")
         write_json(self.artifact_dir / mouse / f"{split}_signal_audit.json", signal_audit(raw))
-        power = fixed_power(raw, self.cache_dir / "spectra")
-        result = FeatureSplit(mouse, split, power, labels, table)
+        spectrum = fixed_spectrum(raw, self.cache_dir / "spectra")
+        result = FeatureSplit(mouse, split, spectrum, labels, table)
         write_json(self.artifact_dir / mouse / f"{split}_provenance.json",
                    dict(fingerprint=result.fingerprint, samples=len(labels), days=sorted(table.day.unique().tolist())))
         table.to_csv(self.artifact_dir / mouse / f"{split}_samples.csv", index=False)
