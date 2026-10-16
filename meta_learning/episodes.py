@@ -48,7 +48,9 @@ def balanced_indices(labels, available, per_class, rng):
         candidates = available[labels[available] == label]
         if not len(candidates):
             raise ValueError("An episode needs both classes")
-        chosen.extend(rng.choice(candidates, size=min(per_class, len(candidates)), replace=False).tolist())
+        selected = candidates if per_class is None else rng.choice(
+            candidates, size=min(per_class, len(candidates)), replace=False)
+        chosen.extend(selected.tolist())
     return rng.permutation(np.asarray(chosen, dtype=np.int64))
 
 

@@ -51,21 +51,28 @@ def checkpoint(model, optimizer, step, rng, history, selection, identity, elapse
                 training_wall_seconds=elapsed_seconds, peak_vram_mb=peak_vram_mb)
 
 
+def fit_progress(stage, **context):
+    return lambda row: print(json.dumps(dict(stage=stage, **context, **row)), flush=True)
+
+
 def validate(initial, store, config, device, step, run_dir, identity):
     subjects, predictions, adapted = {}, {}, {}
     for position, mouse in enumerate(config.targets):
         training, validation = store.load(mouse, "train"), store.load(mouse, "validation")
-        model, scale = adapt_model(initial, training, config, device, config.seed + 10000 + position)
+        model, scale, fit = adapt_model(initial, training, config, device, config.seed + 10000 + position,
+                                        return_diagnostics=True,
+                                        progress=fit_progress("per_mouse_fit", step=step, mouse=mouse))
         metrics, probabilities = prediction_metrics(validation.labels, predict(
             model, validation, scale, config.batch_size, device))
         metrics["evaluation_protocol_sha256"] = validation.fingerprint
+        metrics["classifier_fit"] = fit
         subjects[mouse] = metrics
         table = validation.table.copy()
         table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
         predictions[mouse] = table
         adapted[mouse] = dict(model=cpu_state(model), scale=scale, mouse=mouse,
                               training_fingerprint=training.fingerprint, validation_fingerprint=validation.fingerprint,
-                              identity=identity, step=step, config=config.to_dict())
+                              identity=identity, step=step, config=config.to_dict(), classifier_fit=fit)
     aggregate = {key: float(np.mean([row[key] for row in subjects.values()]))
                  for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
     return dict(step=step, aggregate=aggregate, subjects=subjects), predictions, adapted
@@ -92,10 +99,20 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),
                       spectrum_config=SPECTRUM_CONFIG, frontend_config=FRONTEND_CONFIG,
                       day_splits=DAY_SPLITS, cnn_input_shape=list(CNN_INPUT_SHAPE),
+                      task_schedule=dict(mice="Every configured mouse exactly once per outer step",
+                                         mouse_order=list(config.targets), tasks_per_step=len(config.targets),
+                                         episodes="Uniform within each mouse", gradient_reduction="Mean per mouse"),
                       normalization="Support-only mean power per episode; Days 0-7 mean power for adaptation",
                       batchnorm="Fixed running statistics; trainable affine weights; no query-batch dependence",
-                      inner_updates="CNN only", outer_updates="Shared frontend and CNN initialization",
-                      meta_gradient="Full differentiation through inner SGD steps")
+                      inner_updates=(f"Epoch-based task-local CNN {config.inner_optimizer}; support-only stability"
+                                     if config.algorithm == "meta" else "None"),
+                      outer_updates=("Shared frontend only" if config.algorithm == "meta" else
+                                     "Frontend and auxiliary CNN; CNN discarded before per-mouse fitting"),
+                      classifier_seed=config.seed,
+                      adaptation="Fresh CNN; frozen frontend; same epoch solver and patience as inner training",
+                      inner_stopping="Support eval loss only; completed stopping epoch; min/max epochs and consecutive relative-loss stability",
+                      meta_gradient=("Full unrolled frontend hypergradient with RNG-preserving segment checkpointing; discrete stopping held fixed"
+                                     if config.algorithm == "meta" else "Direct supervised gradient"))
     identity = digest(provenance)
     if resume:
         if not metadata_path.exists() or json.loads(metadata_path.read_text())["identity"] != identity:
@@ -122,8 +139,10 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
     seed_everything(config.seed)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
-    model = MetaModel().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.outer_lr)
+    model = MetaModel(cnn_seed=config.seed).to(device)
+    model.cnn.requires_grad_(config.algorithm == "pooled")
+    outer_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    optimizer = torch.optim.Adam(outer_parameters, lr=config.outer_lr)
     rng = np.random.default_rng(config.seed)
     start_step, history, selection, elapsed_seconds, previous_peak = 0, [], None, 0.0, 0.0
     if resume:
@@ -148,28 +167,53 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 write_json(status_path, dict(status="complete", step=start_step, selection=selection,
                     training_wall_seconds=elapsed_seconds, peak_vram_mb=previous_peak))
             return selection
+    if not resume:
+        save_checkpoint(run_dir / "checkpoints" / "last.pt",
+                        checkpoint(model, optimizer, 0, rng, history, selection, identity, 0.0, previous_peak))
     started = time.monotonic()
     def peak_memory():
         current = torch.cuda.max_memory_allocated(device) / 2**20 if device.type == "cuda" else 0.0
         return max(previous_peak, current)
     try:
         for step in range(start_step + 1, config.outer_steps + 1):
+            write_json(run_dir / "status.json", dict(status="training", step=step - 1,
+                       active_step=step, target_steps=config.outer_steps))
             optimizer.zero_grad(set_to_none=True)
-            losses = []
-            for _ in range(config.tasks_per_step):
-                # Equal mouse weights match the macro validation objective.
-                mouse = config.targets[int(rng.integers(len(config.targets)))]
+            losses, inner_reports = [], []
+            for task_index, mouse in enumerate(config.targets):
+                # Accumulate every mouse's equally weighted gradient before one outer update.
                 episode = episodes[mouse][int(rng.integers(len(episodes[mouse])))]
                 support, query = episode_batch(training[mouse], episode, config, rng, device)
-                objective = meta_objective if config.algorithm == "meta" else pooled_objective
-                loss = objective(model, support, query, config)
+                if config.algorithm == "meta":
+                    loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
+                        progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse))
+                    fit.update(mouse=mouse, support_days=list(episode.support_days),
+                               query_days=list(episode.query_days), query_samples=len(query[1]))
+                    write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
+                    inner_reports.append(fit)
+                    fit_progress("query_task", step=step, task=task_index, mouse=mouse,
+                                 query_days=list(episode.query_days))(fit["query"])
+                else:
+                    loss = pooled_objective(model, support, query, config)
                 if not torch.isfinite(loss):
                     raise FloatingPointError("Non-finite outer loss")
-                (loss / config.tasks_per_step).backward()
+                (loss / len(config.targets)).backward()
                 losses.append(float(loss.detach()))
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip, error_if_nonfinite=True)
+            grad_norm = torch.nn.utils.clip_grad_norm_(outer_parameters, config.gradient_clip, error_if_nonfinite=True)
             optimizer.step()
-            row = dict(step=step, outer_loss=float(np.mean(losses)), gradient_norm=float(grad_norm))
+            row = dict(step=step, mice=list(config.targets), tasks=len(losses),
+                       outer_loss=float(np.mean(losses)), gradient_norm=float(grad_norm))
+            if inner_reports:
+                subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
+                aggregate = {key: float(np.mean([metrics[key] for metrics in subjects.values()]))
+                             for key in ["loss", "accuracy"]}
+                row["query"] = dict(aggregate=aggregate, subjects=subjects)
+                fit_progress("query_step", step=step)(row["query"])
+                row["inner"] = dict(mean_epochs=float(np.mean([fit["epochs_run"] for fit in inner_reports])),
+                                    mean_selected_epoch=float(np.mean([fit["selected_epoch"] for fit in inner_reports])),
+                                    optimizer_steps=sum(fit["optimizer_steps"] for fit in inner_reports),
+                                    plateau_tasks=sum(fit["plateau_reached"] for fit in inner_reports),
+                                    max_epoch_tasks=sum(fit["stop_reason"] == "max_epochs" for fit in inner_reports))
             improved = False
             if step % config.eval_every == 0 or step == config.outer_steps:
                 report, predictions, adapted = validate(model, store, config, device, step, run_dir, identity)
@@ -188,7 +232,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                         predictions[mouse].to_csv(path.parent / "predictions_validation.csv", index=False)
                         write_json(path.parent / "validation_metrics.json", report["subjects"][mouse])
                     selection = dict(report, identity=identity, adapted_models=models)
-                    save_checkpoint(directory / "meta.pt", dict(model=cpu_state(model), identity=identity, step=step))
+                    save_checkpoint(directory / "frontend.pt", dict(frontend=cpu_state(model.frontend),
+                                    identity=identity, step=step))
                 write_json(run_dir / "validation" / f"step-{step:06d}.json", report)
             history.append(row)
             if step % config.checkpoint_every == 0 or "validation" in row:
@@ -240,6 +285,7 @@ def evaluate_run(store, run_dir, device, split="validation"):
             raise ValueError("Validation sample provenance changed")
         metrics, probabilities = prediction_metrics(values.labels, predict(model, values, state["scale"], config.batch_size, device))
         metrics["evaluation_protocol_sha256"] = values.fingerprint
+        metrics["classifier_fit"] = state["classifier_fit"]
         subjects[mouse] = metrics
         destination = run_dir / "evaluation" / split / mouse
         destination.mkdir(parents=True, exist_ok=True)
