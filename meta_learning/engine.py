@@ -1,6 +1,7 @@
 """Finite training, exact checkpoint resumption, model selection, and inference."""
 
 import copy
+import contextlib
 import importlib.metadata
 import json
 import random
@@ -50,6 +51,18 @@ def checkpoint(model, optimizer, step, rng, history, selection, identity, elapse
                 cuda_rng=torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
                 python_rng=random.getstate(), history=history, selection=selection, identity=identity,
                 training_wall_seconds=elapsed_seconds, peak_vram_mb=peak_vram_mb)
+
+
+@contextlib.contextmanager
+def inner_shuffle_rng(seed, device):
+    """Seed inner shuffles for one task without changing the caller's RNG streams."""
+    if seed is None:
+        yield
+        return
+    devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == "cuda" else []
+    with torch.random.fork_rng(devices=devices):
+        torch.manual_seed(seed)
+        yield
 
 
 def fit_progress(stage, **context):
@@ -108,7 +121,7 @@ def query_improves(score, previous):
 
 
 def log_stft_baseline(initial, store, config, device, run_dir, identity):
-    """Fit the pure log-STFT control before outer training; reuse it on resume."""
+    """Fit the standalone log_stft algorithm; reuse its completed report on resume."""
     directory = Path(run_dir) / "baseline" / "log_stft"
     report_path = directory / "report.json"
     if report_path.exists():
@@ -123,7 +136,7 @@ def log_stft_baseline(initial, store, config, device, run_dir, identity):
         baseline = copy.deepcopy(initial)
         baseline.frontend = LogSTFTFrontend().to(device)
         started = time.monotonic()
-        # Preserve outer training RNG streams, including shuffled inner batches.
+        # Per-mouse fitting is reproducible and does not change caller RNG state.
         with torch.random.fork_rng():
             report, predictions, adapted = validate(baseline, store, config, device, 0,
                 run_dir, identity, fit_stage="baseline_log_stft_fit")
@@ -136,7 +149,7 @@ def log_stft_baseline(initial, store, config, device, run_dir, identity):
             save_predictions(path.parent, predictions[mouse], report["subjects"][mouse],
                              report["eval"]["subjects"][mouse])
         report.update(identity=identity, frontend_type="pure_log_stft", frontend_parameters=0,
-                      description="Fixed log1p STFT, average pooling and bilinear resize; no neural residual; "
+                      description="Fixed log1p STFT and adaptive average pooling to the native 55x40 grid; no learned stages; "
                                   "fresh per-mouse CNN trained on Days 0-7; query Days 8/11; eval Days 12/13",
                       adapted_models=records, wall_seconds=time.monotonic() - started)
         # Publish the completion marker only after all per-mouse artifacts exist.
@@ -150,6 +163,33 @@ def log_stft_baseline(initial, store, config, device, run_dir, identity):
     print(json.dumps(dict(stage="baseline_log_stft", step=0, reused=reused,
                           aggregate=report["aggregate"], eval=report["eval"]["aggregate"])), flush=True)
     return report
+
+
+def run_log_stft(model, store, config, device, run_dir, identity):
+    """One support-only CNN fit per mouse, without an outer optimizer or loop."""
+    status_path = run_dir / "status.json"
+    previous_status = json.loads(status_path.read_text()) if status_path.exists() else {}
+    try:
+        if previous_status.get("status") != "complete":
+            write_json(status_path, dict(status="log_stft_fit", step=0, target_steps=0))
+        report = log_stft_baseline(model, store, config, device, run_dir, identity)
+        selection = dict(report, criterion="Single fixed log-STFT fit; no outer updates or checkpoint search")
+        selection_path = run_dir / "selection.json"
+        if previous_status.get("status") == "complete" and selection_path.exists():
+            if json.loads(selection_path.read_text()) != selection:
+                raise ValueError("Standalone baseline selection changed")
+            return selection
+        write_json(run_dir / "selection.json", selection)
+        write_json(run_dir / "history.json", [dict(step=0, algorithm="log_stft",
+                   query_refit=report["aggregate"], eval=report["eval"]["aggregate"])])
+        peak = torch.cuda.max_memory_allocated(device) / 2**20 if device.type == "cuda" else 0.0
+        peak = max(peak, previous_status.get("peak_vram_mb", 0.0))
+        write_json(status_path, dict(status="complete", step=0, target_steps=0,
+                   training_wall_seconds=report["wall_seconds"], peak_vram_mb=peak, selection=selection))
+        return selection
+    except BaseException as error:
+        write_json(run_dir / "status.json", dict(status="interrupted", error=type(error).__name__, message=str(error)))
+        raise
 
 
 def train_run(config, store, run_dir, prepared_dir, device, resume=False):
@@ -171,27 +211,42 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       training_fingerprints={mouse: split.fingerprint for mouse, split in training.items()},
                       query_fingerprints={mouse: split.fingerprint for mouse, split in queries.items()},
                       split_roles=dict(support="train", query="validation", eval="test"),
-                      selection_criterion="Minimum mean query log loss; test metrics are reporting only",
+                      selection_criterion=("Single fixed log-STFT fit; no checkpoint search"
+                          if config.algorithm == "log_stft" else
+                          "Minimum mean query log loss; test metrics are reporting only"),
                       runtime=runtime_identity(device), sample_config=sample_pipeline.SAMPLE_CONFIG,
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),
-                      spectrum_config=SPECTRUM_CONFIG, frontend_config=FRONTEND_CONFIG,
-                      startup_baseline="Step 0: pure log1p STFT without neural residual; matched support-only CNN fitting, validation query and test eval",
+                      spectrum_config=SPECTRUM_CONFIG,
+                      frontend_config=(dict(architecture="pure_log_stft", input_transform="log1p_base10",
+                          temporal_pooling="adaptive_average", time_bins=FRONTEND_CONFIG["time_bins"],
+                          frequency_bins=FRONTEND_CONFIG["input_frequency_bins"], parameters=0)
+                          if config.algorithm == "log_stft" else FRONTEND_CONFIG),
+                      baseline_policy="Standalone algorithm=log_stft only; no automatic startup baseline",
                       day_splits=DAY_SPLITS, cnn_input_shape=list(CNN_INPUT_SHAPE),
-                      task_schedule=dict(mice="Every configured mouse exactly once per outer step",
-                                         mouse_order=list(config.targets), tasks_per_step=len(config.targets),
+                      task_schedule=dict(mice=("Every configured mouse fitted once; no outer loop"
+                                             if config.algorithm == "log_stft" else
+                                             "Every configured mouse exactly once per outer step"),
+                                         mouse_order=list(config.targets),
+                                         tasks_per_step=0 if config.algorithm == "log_stft" else len(config.targets),
                                          episodes="One fixed train-support/validation-query task per mouse", gradient_reduction="Mean per mouse"),
                       normalization="Identity (scale=1) before the neural frontend; no fitted statistics",
                       batchnorm="Support batch statistics and per-task running EMA; query/test use frozen support EMA; full EMA hypergradient",
+                      inner_shuffles=("Fresh window order and minibatch shuffles every outer step"
+                                      if config.inner_shuffle_seed is None else
+                                      f"Fixed per task: seed {config.inner_shuffle_seed} + task index; "
+                                      "identical window order and minibatch shuffles every outer step"),
                       inner_updates=(f"Task-local CNN {config.inner_optimizer}; exactly {config.inner_epochs} full epochs"
-                                     if config.algorithm == "meta" else "None"),
-                      outer_updates=("Shared frontend only" if config.algorithm == "meta" else
-                                     "Frontend and auxiliary CNN; CNN discarded before per-mouse fitting"),
+                                     if config.algorithm in {"meta", "log_stft"} else "None"),
+                      outer_updates={"meta": "Shared frontend only",
+                                     "pooled": "Frontend and auxiliary CNN; CNN discarded before per-mouse fitting",
+                                     "log_stft": "None; fixed frontend and one CNN fit per mouse"}[config.algorithm],
                       classifier_seed=config.seed,
                       frontend_seed=config.seed,
                       adaptation="Fresh CNN; frozen frontend; same fixed epoch budget as inner training",
                       inner_stopping="Fixed epoch budget; no early stopping; final epoch classifier; support metrics are diagnostic only",
                       meta_gradient=("Full unrolled frontend hypergradient through every fixed-epoch update with RNG-preserving segment checkpointing"
-                                     if config.algorithm == "meta" else "Direct supervised gradient"))
+                                     if config.algorithm == "meta" else
+                                     "None" if config.algorithm == "log_stft" else "Direct supervised gradient"))
     identity = digest(provenance)
     if resume:
         if not metadata_path.exists() or json.loads(metadata_path.read_text())["identity"] != identity:
@@ -218,6 +273,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     model = MetaModel(cnn_seed=config.seed).to(device)
+    if config.algorithm == "log_stft":
+        return run_log_stft(model, store, config, device, run_dir, identity)
     model.cnn.requires_grad_(config.algorithm == "pooled")
     outer_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.Adam(outer_parameters, lr=config.outer_lr)
@@ -253,9 +310,6 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
         current = torch.cuda.max_memory_allocated(device) / 2**20 if device.type == "cuda" else 0.0
         return max(previous_peak, current)
     try:
-        write_json(run_dir / "status.json", dict(status="baseline_log_stft", step=start_step,
-                   target_steps=config.outer_steps))
-        baseline = log_stft_baseline(model, store, config, device, run_dir, identity)
         for step in range(start_step + 1, config.outer_steps + 1):
             write_json(run_dir / "status.json", dict(status="training", step=step - 1,
                        active_step=step, target_steps=config.outer_steps))
@@ -264,10 +318,17 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
             for task_index, mouse in enumerate(config.targets):
                 # Accumulate every mouse's equally weighted gradient before one outer update.
                 episode = episodes[mouse]
-                support, query = episode_batch(training[mouse], queries[mouse], episode, config, rng, device)
+                fixed_seed = (None if config.inner_shuffle_seed is None else
+                              config.inner_shuffle_seed + task_index)
+                # A fixed seed reuses the same window order and inner minibatch shuffles every
+                # outer step, so the meta objective is a deterministic function of the frontend.
+                task_rng = rng if fixed_seed is None else np.random.default_rng(fixed_seed)
+                support, query = episode_batch(training[mouse], queries[mouse], episode, config, task_rng, device)
                 if config.algorithm == "meta":
-                    loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
-                        progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse))
+                    with inner_shuffle_rng(fixed_seed, device):
+                        loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
+                            progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse))
+                    fit.update(inner_shuffle_seed=fixed_seed)
                     fit.update(mouse=mouse, support_days=list(episode.support_days),
                                query_days=list(episode.query_days), query_samples=len(query[1]))
                     write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
@@ -301,15 +362,10 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 report, predictions, adapted = validate(model, store, config, device, step, run_dir, identity)
                 row["query_refit"] = report["aggregate"]
                 row["eval"] = report["eval"]["aggregate"]
-                row["query_minus_log_stft"] = {
-                    key: report["aggregate"][key] - baseline["aggregate"][key]
-                    for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
+                row["frontend"] = model.frontend.describe()["state"]
                 score = report["aggregate"]
                 previous = selection["aggregate"] if selection else None
                 improved = query_improves(score, previous)
-                row["eval_minus_log_stft"] = {
-                    key: report["eval"]["aggregate"][key] - baseline["eval"]["aggregate"][key]
-                    for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
                 fit_progress("query_eval_step", step=step)(dict(query=score, eval=row["eval"]))
                 if improved:
                     directory = run_dir / "selected" / f"step-{step:06d}"
@@ -370,6 +426,8 @@ def evaluate_run(store, run_dir, device, split="test"):
         if state["identity"] != metadata["identity"] or state["mouse"] != mouse:
             raise ValueError("Selected checkpoint identity mismatch")
         model = MetaModel().to(device)
+        if config.algorithm == "log_stft":
+            model.frontend = LogSTFTFrontend().to(device)
         model.load_state_dict(state["model"])
         values = store.load(mouse, split)
         if values.fingerprint != state[f"{split}_fingerprint"]:

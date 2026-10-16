@@ -7,12 +7,12 @@ if [[ "$action" == help || "$action" == --help || "$action" == -h ]]; then
     cat <<'HELP'
 Usage: ./run_meta.sh prepare|train|validate|test|check [OPTIONS]
   prepare    Verify raw recordings and source annotation alignment
-  train      Run a finite meta or pooled training job
+  train      Run meta, pooled, or standalone log-STFT training
   validate   Replay training-query metrics on Days 8/11
   test       Replay held-out eval on Days 12/13 (also scored during training)
   check      Run unit and synthetic integration tests
 
-Train options: --config configs/meta.json --algorithm meta|pooled
+Train options: --config configs/meta.json --algorithm meta|pooled|log_stft
                --steps N --targets X1,... --resume --plan-only
 Launcher options: --device auto|cuda|cpu --dry-run
 Environment: DATA_DIR, CACHE_DIR, PREPARED_DIR, OUTPUT_DIR, IMAGE_NAME,
@@ -26,7 +26,7 @@ case "$action" in prepare|train|validate|test|check) ;; *) echo "Unknown action:
 data_dir="${DATA_DIR:-/data/users/jianchen/data/seizure_data}"
 cache_dir="${CACHE_DIR:-/data/users/jianchen/data/seizure_data-cache/meta-learning}"
 prepared_dir="${PREPARED_DIR:-$cache_dir/prepared}"
-output_dir="${OUTPUT_DIR:-$project_dir/results/neural-stft-train-val-bn-meta}"
+output_dir="${OUTPUT_DIR:-$project_dir/results/gated-frontend-meta}"
 image_name="${IMAGE_NAME:-seizure-prediction-cnn:pytorch}"
 device=auto
 dry_run=false

@@ -1,7 +1,9 @@
-"""A smooth residual convolutional network between fixed STFT and the task CNN.
+"""A gated, learnable spectral frontend between fixed STFT and the task CNN.
 
-Only centered/resampled STFT magnitudes are cached. The neural frontend retains
-the time-frequency map and learns local corrections without rank selection.
+Only centered/resampled STFT magnitudes are cached. The frontend learns
+compression, sample-local normalization, global feature modulation, local and
+long-range time-frequency corrections, and temporal aggregation. Every learned
+stage starts at (or within a small residual of) the log-STFT average-pooling map.
 """
 
 import hashlib
@@ -27,12 +29,18 @@ SPECTRUM_CONFIG = dict(source_hz=500, target_hz=256, frame_length=256,
                        hop_length=128, frequency_hz=[1, 40], center=False,
                        window="cosine_symmetric", end_padding="next_frame_multiple",
                        representation="unnormalized_magnitude")
-FRONTEND_CONFIG = dict(architecture="residual_conv2d", input_frequency_bins=40,
-    hidden_channels=16, kernels=[3, 3, 1], activation="gelu", input_transform="log1p_base10",
-    residual_scale=0.1, output_init_std=1e-3, temporal_pooling="adaptive_average",
-    time_bins=55, frequency_bins=114, interpolation="bilinear", normalization="none",
-    checkpoint_batch_size=32,
-    initialization="Seeded neural weights; small residual around full log-STFT map")
+FRONTEND_CONFIG = dict(architecture="gated_spectral_frontend", input_frequency_bins=40,
+    input_frames=223,
+    compression="Per-frequency Box-Cox of (1 + magnitude) in log10 units; lambda=0 is log1p",
+    compression_bound=0.5,
+    normalization="Per-sample, per-frequency gated centering/scaling over time; gates start at 0",
+    normalization_epsilon=1e-4,
+    film="Per-sample time mean/std per frequency -> MLP -> per-frequency scale/shift",
+    film_hidden=32,
+    hidden_channels=16, time_dilations=[1, 2, 4, 8, 16, 32, 64], kernel=[3, 3], activation="gelu",
+    temporal_aggregation="Learnable linear frames->time_bins map initialized to adaptive average pooling",
+    time_bins=55, frequency_bins=40, head_initialization="zeros", checkpoint_batch_size=32,
+    initialization="Seeded; exact log-STFT average-pooling map at step 0 (identity gates, zero heads)")
 
 
 def fixed_spectrum_batch(raw):
@@ -85,7 +93,7 @@ def fixed_spectrum(raw, cache):
 
 
 class LogSTFTFrontend(nn.Module):
-    """Parameter-free log-STFT control using the same CNN grid as the network."""
+    """Parameter-free log-STFT control on the same native CNN grid as the network."""
 
     @staticmethod
     def log_map(magnitude):
@@ -94,44 +102,99 @@ class LogSTFTFrontend(nn.Module):
     @staticmethod
     def cnn_grid(features):
         pooled = F.adaptive_avg_pool2d(features, (FRONTEND_CONFIG["time_bins"], features.shape[-1]))
-        return F.interpolate(pooled, size=(FRONTEND_CONFIG["time_bins"], FRONTEND_CONFIG["frequency_bins"]),
-                             mode="bilinear", align_corners=False).unsqueeze(1)
+        return pooled.unsqueeze(1)
 
     def forward(self, magnitude):
         return self.cnn_grid(self.log_map(magnitude))
 
 
-class SpectralFrontend(LogSTFTFrontend):
-    """Learn a dense time-frequency map with smooth neural residual corrections."""
+def box_cox_log10(magnitude, lam):
+    """Box-Cox of (1 + magnitude) in log10 units; lam == 0 is exactly log1p / ln(10)."""
+    log_value = torch.log1p(magnitude)
+    small = lam.abs() < 1e-4
+    safe = torch.where(small, torch.ones_like(lam), lam)
+    exact = torch.expm1(lam * log_value) / safe
+    series = log_value + 0.5 * lam * log_value.square()
+    return torch.where(small, series, exact) / math.log(10)
+
+
+class SpectralFrontend(nn.Module):
+    """Gated compression, normalization, FiLM, residual conv network, and time aggregation."""
 
     def __init__(self, seed=0):
         super().__init__()
         c = FRONTEND_CONFIG
         frequencies = torch.fft.rfftfreq(SPECTRUM_CONFIG["frame_length"], d=1 / 256)
         self.register_buffer("frequencies", frequencies[(frequencies >= 1) & (frequencies <= 40)])
+        bins, frames, hidden = c["input_frequency_bins"], c["input_frames"], c["hidden_channels"]
         # Initialize CPU layers without advancing caller CPU/CUDA RNG streams,
         # keeping the reference task CNN unchanged when the frontend is replaced.
         with torch.random.fork_rng(devices=[]):
             generator = torch.Generator(device="cpu").manual_seed(seed)
             torch.set_rng_state(generator.get_state())
-            hidden = c["hidden_channels"]
-            self.network = nn.Sequential(nn.Conv2d(1, hidden, 3, padding=1), nn.GELU(),
-                                         nn.Conv2d(hidden, hidden, 3, padding=1), nn.GELU(),
-                                         nn.Conv2d(hidden, 1, 1))
-            # A small nonzero head lets every layer receive gradients from step 1.
-            nn.init.normal_(self.network[-1].weight, std=c["output_init_std"])
-            nn.init.zeros_(self.network[-1].bias)
+            # (1) Compression exponent per frequency; zero is the log1p map.
+            self.compression_raw = nn.Parameter(torch.zeros(bins))
+            # (2) Sample-local centering/scaling gates; zero preserves absolute amplitude.
+            self.center_gate = nn.Parameter(torch.zeros(bins))
+            self.scale_gate = nn.Parameter(torch.zeros(bins))
+            # (4) Global per-sample statistics modulate each frequency.
+            self.film = nn.Sequential(nn.Linear(2 * bins, c["film_hidden"]), nn.GELU(),
+                                      nn.Linear(c["film_hidden"], 2 * bins))
+            # (3) Local frequency and long-range dilated time convolutions.
+            self.stem = nn.Conv2d(1, hidden, 3, padding=1, padding_mode="replicate")
+            self.blocks = nn.ModuleList(
+                nn.Conv2d(hidden, hidden, 3, padding=(dilation, 1), dilation=(dilation, 1),
+                          padding_mode="replicate")
+                for dilation in c["time_dilations"])
+            self.head = nn.Conv2d(hidden, 1, 1)
+            # Zero heads make the initial map exactly log-STFT. Head weights receive
+            # gradients immediately; inner FiLM/conv layers follow once heads move.
+            for layer in (self.film[-1], self.head):
+                nn.init.zeros_(layer.weight)
+                nn.init.zeros_(layer.bias)
+        # (5) Linear temporal aggregation starts as adaptive average pooling.
+        reference = F.adaptive_avg_pool1d(torch.eye(frames).unsqueeze(0), c["time_bins"])[0].T
+        self.register_buffer("aggregation_reference", reference.contiguous())
+        self.aggregation_delta = nn.Parameter(torch.zeros_like(reference))
+
+    def compression_exponent(self):
+        return FRONTEND_CONFIG["compression_bound"] * torch.tanh(self.compression_raw)
 
     def describe(self):
-        return dict(FRONTEND_CONFIG, parameters=sum(parameter.numel() for parameter in self.parameters()))
+        with torch.no_grad():
+            exponent = self.compression_exponent()
+            gates = dict(compression_exponent=exponent, center_gate=self.center_gate,
+                         scale_gate=self.scale_gate)
+            summary = {name: dict(mean=float(value.mean()), min=float(value.min()), max=float(value.max()))
+                       for name, value in gates.items()}
+            summary["aggregation_delta_norm"] = float(self.aggregation_delta.norm())
+        return dict(FRONTEND_CONFIG, parameters=sum(parameter.numel() for parameter in self.parameters()),
+                    state=summary)
 
     def _forward_batch(self, magnitude):
-        # Magnitudes are nonnegative by construction; no hard floor is needed.
-        base = self.log_map(magnitude)
-        features = base + FRONTEND_CONFIG["residual_scale"] * self.network(base)
-        return self.cnn_grid(features)
+        c = FRONTEND_CONFIG
+        # (1) Magnitudes are nonnegative by construction; no hard floor is needed.
+        compressed = box_cox_log10(magnitude.transpose(1, 2).unsqueeze(1), self.compression_exponent())
+        mean = compressed.mean(dim=2, keepdim=True)
+        std = (compressed.var(dim=2, unbiased=False, keepdim=True) + c["normalization_epsilon"]).sqrt()
+        # (2) Per-sample statistics only; features never depend on batch companions.
+        normalized = (compressed - self.center_gate * mean) * torch.exp(-self.scale_gate * std.log())
+        # (4) FiLM from statistics of the compressed, unnormalized map.
+        scale, shift = self.film(torch.cat([mean.flatten(1), std.flatten(1)], dim=1)).chunk(2, dim=1)
+        features = normalized * (1 + scale[:, None, None]) + shift[:, None, None]
+        # (3) Residual network; time dilations reach the full 112-second window.
+        hidden = self.stem(features)
+        for block in self.blocks:
+            hidden = hidden + block(F.gelu(hidden))
+        features = features + self.head(F.gelu(hidden))
+        # (5) Learned linear map over time; frequencies stay on their native 1 Hz grid.
+        aggregation = self.aggregation_reference + self.aggregation_delta
+        return torch.einsum("ot,nctf->ncof", aggregation, features).unsqueeze(1)
 
     def forward(self, magnitude):
+        expected = (FRONTEND_CONFIG["input_frequency_bins"], FRONTEND_CONFIG["input_frames"])
+        if tuple(magnitude.shape[1:]) != expected:
+            raise ValueError(f"Expected STFT magnitudes shaped (N, {expected[0]}, {expected[1]})")
         outputs = []
         differentiable = torch.is_grad_enabled() and (
             magnitude.requires_grad or any(parameter.requires_grad for parameter in self.parameters()))

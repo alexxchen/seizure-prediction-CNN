@@ -25,10 +25,10 @@ def data_arguments(parser):
 
 
 def train_main():
-    parser = argparse.ArgumentParser(description="Train a cross-day meta-learner or a matched pooled baseline")
+    parser = argparse.ArgumentParser(description="Train a meta-learner, pooled control, or standalone log-STFT baseline")
     data_arguments(parser)
     parser.add_argument("--config", type=Path, default=ROOT / "configs" / "meta.json")
-    parser.add_argument("--algorithm", choices=["meta", "pooled"])
+    parser.add_argument("--algorithm", choices=["meta", "pooled", "log_stft"])
     parser.add_argument("--steps", type=int, help="Override the finite outer-step budget")
     parser.add_argument("--targets", type=parse_targets)
     parser.add_argument("--resume", action="store_true")

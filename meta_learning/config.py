@@ -17,6 +17,7 @@ class Config:
     inner_epochs: int = 50
     inner_checkpoint_steps: int = 5
     inner_log_every: int = 0
+    inner_shuffle_seed: int | None = None
     inner_optimizer: str = "sgd"
     inner_lr: float = 5e-4
     inner_momentum: float = 0.9
@@ -34,8 +35,8 @@ class Config:
     gradient_clip: float = 5.0
 
     def validate(self):
-        if self.algorithm not in {"meta", "pooled"}:
-            raise ValueError("algorithm must be meta or pooled")
+        if self.algorithm not in {"meta", "pooled", "log_stft"}:
+            raise ValueError("algorithm must be meta, pooled, or log_stft")
         if self.inner_optimizer not in {"adam", "sgd"}:
             raise ValueError("inner_optimizer must be adam or sgd")
         if (not self.targets or len(set(self.targets)) != len(self.targets) or
@@ -51,6 +52,9 @@ class Config:
             raise ValueError("inner_checkpoint_steps must be a nonnegative integer")
         if type(self.inner_log_every) is not int or self.inner_log_every < 0:
             raise ValueError("inner_log_every must be a nonnegative integer (0 logs only the final epoch)")
+        if self.inner_shuffle_seed is not None and (
+                type(self.inner_shuffle_seed) is not int or self.inner_shuffle_seed < 0):
+            raise ValueError("inner_shuffle_seed must be null (fresh shuffles) or a nonnegative integer")
         for key in ["support_per_class", "query_per_class"]:
             value = getattr(self, key)
             if value is not None and (type(value) is not int or value < 1):

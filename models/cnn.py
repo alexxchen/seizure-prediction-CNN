@@ -51,7 +51,8 @@ class SeizureCNN(nn.Module):
             raise ValueError("Input dimensions must be positive")
         electrodes, time_bins, frequency_bins = self.input_shape[1:]
         self.normal1 = AxisBatchNorm(electrodes, axis=2)
-        self.conv1 = nn.Conv3d(1, 16, (electrodes, 5, 5), stride=(1, 2, 2))
+        # Pad time/frequency so the native 40-bin (1-40 Hz) axis survives all pools.
+        self.conv1 = nn.Conv3d(1, 16, (electrodes, 5, 5), stride=(1, 2, 2), padding=(0, 2, 2))
         # For kernel == stride == 2, ceil_mode matches TensorFlow SAME pooling.
         self.pool1 = nn.MaxPool3d((1, 2, 2), stride=(1, 2, 2), ceil_mode=True)
         self.normal2 = AxisBatchNorm(16, axis=1)
@@ -64,7 +65,7 @@ class SeizureCNN(nn.Module):
         self.drop2 = nn.Dropout(0.5)
 
         def output_bins(size):
-            size = (size - 5) // 2 + 1
+            size = (size - 1) // 2 + 1
             size = (size + 1) // 2
             size = (size - 2) // 2
             return (size - 2) // 2
