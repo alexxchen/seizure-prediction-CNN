@@ -150,7 +150,7 @@ def build_tables(dataset, target):
 
 
 def clean_signal(signal):
-    """Edit cleaning here or in input_pipeline; apply the same rule to all splits."""
+    """Apply the same waveform cleaning rule to all day splits."""
     return np.asarray(signal, dtype=np.float32)
 
 

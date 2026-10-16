@@ -21,3 +21,6 @@ docker-output*
 autoresearch-data
 autoresearch-runs
 run.log
+research-results
+prepared
+meta-runs

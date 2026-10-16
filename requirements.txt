@@ -4,8 +4,3 @@ scipy==1.11.4
 pandas==2.2.3
 pyarrow==18.1.0
 scikit-learn==1.5.2
-mne==1.8.0
-matplotlib==3.9.2
-h5py==3.12.1
-hickle==5.0.3
-stft==0.5.2

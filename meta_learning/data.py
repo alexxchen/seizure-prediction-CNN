@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from learnable_frontend import fixed_power
+from meta_learning.frontend import fixed_power
 from meta_learning.common import digest, signal_audit, validate_sample_table, write_json
 from prepare import load_dataset
 import sample_pipeline

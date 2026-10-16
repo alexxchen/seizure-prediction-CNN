@@ -2,7 +2,7 @@
 
 from torch import nn
 
-from learnable_frontend import SpectralFrontend
+from meta_learning.frontend import SpectralFrontend
 from models.cnn import AxisBatchNorm, SeizureCNN
 
 CNN_INPUT_SHAPE = (1, 1, 55, 114)

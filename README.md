@@ -2,7 +2,7 @@
 
 Learn a spectral frontend that helps a classifier generalize from earlier to later recording days of the same mouse. Tasks are shared across mice; the objective directly measures cross-day generalization.
 
-This branch provides finite preparation, task planning, meta-training, personalization, validation, resume, and explicit final-test commands. Historical experiment directories and supervised reference implementations remain available.
+This branch contains the preparation, task planning, meta-training, personalization, validation, resume, and explicit final-test workflow, together with its matched pooled-training control.
 
 ## Data and partitions
 
@@ -14,7 +14,7 @@ Private input contains 168 continuous recordings and `seizure_epochs_pitime_seiz
 | Validation | 8/11 | Checkpoint selection and inference |
 | Test | 12/13 | Explicit final inference using selected adapted checkpoints |
 
-Source recordings and annotations stay read-only. `prepare.py` records source identities and verifies row/timestamp alignment independently of model code. Existing source inventories can also be read; their old trainer-code hashes do not constrain this branch. New inventories use version 3 and contain source identity and day partitions only.
+Source recordings and annotations stay read-only. `prepare.py` records source identities and verifies row/timestamp alignment independently of model code. Source inventories use version 3 and contain source identity and day partitions only.
 
 The shared sample recipe in `sample_pipeline.py` currently uses 112-second windows, a 7-3-minute positive interval, a 56-second grid plus reference offsets, balanced same-mouse/day negatives, ten-minute negative seizure margins, and existing event-history/postictal exclusions. Actual offsets are 0, 128, 56, and 112 seconds from the positive interval start. Training, validation, and test share these definitions. Changes to sampling alter the evaluated task and must be reported.
 
@@ -33,7 +33,7 @@ BatchNorm running means and variances remain fixed in all meta, pooled, and pers
 
 ## Setup and Docker commands
 
-Dependencies remain in `requirements.txt`; the existing `seizure-prediction-cnn:pytorch` image can execute the mounted source. Build a fresh image when needed:
+The six direct runtime dependencies are pinned in `requirements.txt`: PyTorch, NumPy, SciPy, pandas, PyArrow, and scikit-learn. The existing `seizure-prediction-cnn:pytorch` image can execute the mounted source. Build a fresh image when needed:
 
 ```bash
 docker build -t seizure-prediction-cnn:pytorch .
@@ -77,7 +77,7 @@ python -m meta_learning.compare results/meta results/pooled --output results/com
 
 The comparison rejects differences in configuration other than the algorithm, source versions, runtime, training samples, or validation sample fingerprints. It also reports optimization/validation wall time and peak allocated GPU memory for each run.
 
-`configs/meta.json` controls finite budgets, learning rates, task sizes, adaptation, smoothing, and gradient clipping. Defaults use 1,000 outer steps, four tasks per step, three inner SGD steps, and 100 Adam steps for per-mouse personalization. These are new workflow defaults, not the old per-mouse wall-clock search allowance. Use distinct output directories for different configurations or seeds.
+`configs/meta.json` controls finite budgets, learning rates, task sizes, adaptation, smoothing, and gradient clipping. Defaults use 1,000 outer steps, four tasks per step, three inner SGD steps, and 100 Adam steps for per-mouse personalization. Use distinct output directories for different configurations or seeds.
 
 ### Resume and validation replay
 
@@ -134,7 +134,22 @@ Each run retains:
 
 Source preparation and finite-window quality audits establish identity, alignment, and the recorded audit findings. Inspect actual signal artifacts before attributing model behavior to physiology. Independent events and recording days, rather than overlapping window counts, determine the available evidence.
 
-The original supervised helpers in `train.py`, finite comparison scripts, legacy training entry points, and historical result folders are retained for reference. The primary `train.py` CLI now starts this meta-learning workflow. Prior records contain the source snapshots needed to reproduce their original environment and code.
+Historical experiment records remain available locally and contain their original source snapshots. Other branches retain the earlier training implementations. Runs created before a source cleanup can be replayed with their saved source versions.
+
+## Source layout
+
+```text
+meta_learning/      Frontend, chronological episodes, meta/pooled objectives, adaptation, and evaluation
+models/            CNN backbone and axis normalization
+configs/           Full and smoke training configurations
+tests/             Gradient, isolation, caching, resumption, and inference checks
+source_data.py     Read-only recordings and annotations
+sample_pipeline.py Shared sample definitions and raw-window caching
+prepare.py         Source inventory preparation
+train.py           Training entry point
+evaluate.py        Inference entry point
+run_meta.sh        Docker launcher
+```
 
 ## Method references
 

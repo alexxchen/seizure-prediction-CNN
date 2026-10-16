@@ -10,14 +10,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from learnable_frontend import FRONTEND_CONFIG, SPECTRUM_CONFIG
+from meta_learning.frontend import FRONTEND_CONFIG, SPECTRUM_CONFIG
 from meta_learning.adaptation import adapt_model, predict
 from meta_learning.algorithms import meta_objective, pooled_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json
 from meta_learning.config import Config
 from meta_learning.episodes import chronological_episodes, episode_batch
 from meta_learning.model import CNN_INPUT_SHAPE, MetaModel
-from prepare import inventory_signature, verify_prepared
+from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
 import sample_pipeline
 
@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def source_hashes():
     paths = [ROOT / name for name in ["train.py", "evaluate.py", "prepare.py", "source_data.py",
-             "sample_pipeline.py", "input_pipeline.py", "learnable_frontend.py", "requirements.txt", "Dockerfile",
+             "sample_pipeline.py", "requirements.txt", "Dockerfile",
              "SETTINGS_MouseLFP.json", "run_meta.sh"]]
     paths += list((ROOT / "meta_learning").glob("*.py")) + list((ROOT / "models").glob("*.py"))
     return {str(path.relative_to(ROOT)): file_hash(path) for path in sorted(paths)}
@@ -34,7 +34,7 @@ def source_hashes():
 
 def runtime_identity(device):
     return dict(packages={name: importlib.metadata.version(name) for name in
-                          ["torch", "numpy", "scipy", "stft", "scikit-learn", "pyarrow"]},
+                          ["torch", "numpy", "scipy", "pandas", "scikit-learn", "pyarrow"]},
                 device=str(device), cuda=torch.version.cuda, cpu_threads=torch.get_num_threads(),
                 gpu=torch.cuda.get_device_name(device) if device.type == "cuda" else None)
 
@@ -86,7 +86,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
     episodes = {mouse: chronological_episodes(split, config.min_support_days, config.query_days)
                 for mouse, split in training.items()}
     provenance = dict(config=config.to_dict(), source_sha256=source_hashes(),
-                      source_inventory_sha256=digest(inventory_signature(verify_prepared(prepared_dir))),
+                      source_inventory_sha256=digest(verify_prepared(prepared_dir)["signature"]),
                       training_fingerprints={mouse: split.fingerprint for mouse, split in training.items()},
                       runtime=runtime_identity(device), sample_config=sample_pipeline.SAMPLE_CONFIG,
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),

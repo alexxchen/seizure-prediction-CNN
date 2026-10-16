@@ -3,7 +3,6 @@ FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime@sha256:c8268a92a69bd500f8be0e
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    MPLBACKEND=Agg \
     OMP_NUM_THREADS=4 \
     MKL_NUM_THREADS=4
 

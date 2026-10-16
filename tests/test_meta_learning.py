@@ -132,7 +132,7 @@ class MetaLearningTests(unittest.TestCase):
             root = Path(directory)
             prepared = root / "prepared"
             prepared.mkdir()
-            (prepared / "manifest.json").write_text(json.dumps(dict(signature=signature,
+            (prepared / "manifest.json").write_text(json.dumps(dict(version=3, source_hz=500, signature=signature,
                 day_splits={"train": list(range(8)), "validation": [8, 11], "test": [12, 13]})))
             full_store = FakeStore(signature)
             full = root / "full"

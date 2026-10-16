@@ -50,7 +50,7 @@ command_args=(docker run --rm --init --shm-size=1g
     --user "$(id -u):$(id -g)" -e HOME=/tmp
     -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1
     -e "OMP_NUM_THREADS=${TRAIN_CPU_THREADS:-4}" -e "MKL_NUM_THREADS=${TRAIN_CPU_THREADS:-4}"
-    -e "OPENBLAS_NUM_THREADS=${TRAIN_CPU_THREADS:-4}" -e MPLCONFIGDIR=/tmp/matplotlib-meta
+    -e "OPENBLAS_NUM_THREADS=${TRAIN_CPU_THREADS:-4}"
     -w /workspace -v "$project_dir:/workspace:ro"
     -v "$data_dir:/data/MouseLFP:ro" -v "$cache_dir:/cache"
     -v "$prepared_dir:/prepared:$prepared_mode" -v "$output_dir:/output")

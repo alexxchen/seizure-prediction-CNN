@@ -3,13 +3,14 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import torch
 
-import learnable_frontend as frontend
+from meta_learning import frontend
+from meta_learning.model import CNN_INPUT_SHAPE, MetaModel
 from models.cnn import SeizureCNN
-import train
 
 
 class LearnableFrontendTests(unittest.TestCase):
@@ -28,11 +29,12 @@ class LearnableFrontendTests(unittest.TestCase):
 
     def test_shared_initialization_and_actual_frontend_gradients(self):
         torch.manual_seed(0)
-        reference = SeizureCNN(train.CNN_INPUT_SHAPE)
+        reference = SeizureCNN(CNN_INPUT_SHAPE)
         torch.manual_seed(0)
-        frozen = frontend.FrontendCNN(False)
+        frozen = MetaModel()
+        frozen.frontend.requires_grad_(False)
         torch.manual_seed(0)
-        learned = frontend.FrontendCNN(True)
+        learned = MetaModel()
         for name, parameter in reference.state_dict().items():
             self.assertTrue(torch.equal(parameter, learned.cnn.state_dict()[name]))
         power = torch.rand(4, 79, 64)
@@ -54,22 +56,19 @@ class LearnableFrontendTests(unittest.TestCase):
         torch.nn.functional.cross_entropy(frozen(power), labels).backward()
         self.assertTrue(all(p.grad is None for p in frozen.frontend.parameters()))
 
-    def test_training_scale_and_checkpoint_predictions(self):
+    def test_fixed_basis_cache_reuse_and_integrity(self):
         rng = np.random.default_rng(3)
         raw = rng.normal(size=(8, 2000)).astype(np.float32)
-        labels = np.array([0, 1] * 4)
-        validation = raw * 100
         with tempfile.TemporaryDirectory() as folder:
-            work = Path(folder) / "trials" / "learned" / "X1"
-            predictor = frontend.fit(raw, labels, validation, labels, work, "cpu", 0.01, 0)
-            expected_scale = np.float32(frontend.fixed_power_batch(raw).mean(dtype=np.float64))
-            self.assertEqual(predictor.scale, expected_scale)
-            before = predictor.predict_proba(validation)
-            restored = frontend.load_predictor(work, "cpu")
-            np.testing.assert_array_equal(before, restored.predict_proba(validation))
-            self.assertTrue(np.isfinite(before).all())
-            np.testing.assert_allclose(before.sum(axis=1), 1, atol=1e-6)
-            self.assertEqual(restored.scale, expected_scale)
+            cache = Path(folder)
+            values = frontend.fixed_power(raw, cache)
+            np.testing.assert_array_equal(values, frontend.fixed_power_batch(raw))
+            with mock.patch.object(frontend, "fixed_power_batch", side_effect=AssertionError("Cache was not reused")):
+                np.testing.assert_array_equal(values, frontend.fixed_power(raw, cache))
+            with Path(values.filename).open("ab") as file:
+                file.write(b"tampered")
+            with self.assertRaisesRegex(ValueError, "cache changed"):
+                frontend.fixed_power(raw, cache)
 
 
 if __name__ == "__main__":
