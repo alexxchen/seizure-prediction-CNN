@@ -1,0 +1,13 @@
+{
+  "algorithm": "meta",
+  "targets": ["X15"],
+  "outer_steps": 2,
+  "tasks_per_step": 1,
+  "inner_steps": 1,
+  "support_per_class": 2,
+  "query_per_class": 2,
+  "eval_every": 1,
+  "checkpoint_every": 1,
+  "adaptation_steps": 2,
+  "batch_size": 4
+}

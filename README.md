@@ -1,121 +1,141 @@
-# MouseLFP data-pipeline autoresearch
+# MouseLFP cross-day meta-learning
 
-Explore how private continuous LFP recordings and event annotations should be turned into CNN inputs. Research changes sample construction, cleaning, signal representation, and layout while retaining the existing CNN and training controls.
+Learn a spectral frontend that helps a classifier generalize from earlier to later recording days of the same mouse. Tasks are shared across mice; the objective directly measures cross-day generalization.
 
-Use English for project documentation, comments, prompts, logs, and experiment descriptions.
+This branch provides finite preparation, task planning, meta-training, personalization, validation, resume, and explicit final-test commands. Historical experiment directories and supervised reference implementations remain available.
 
-## Source data and research scope
+## Data and partitions
 
-The source folder contains 168 approximately 24-hour signal recordings and the annotation file `seizure_epochs_pitime_seizure_w15_t0.3_min5_gap10.parquet`, with 2,773 event intervals. Recordings contain `pi_time_ms`, `lfp`, and motion channels; their filenames include `interpolated`. This inventory and label alignment do not establish that the signals are clean.
+Private input contains 168 continuous recordings and `seizure_epochs_pitime_seizure_w15_t0.3_min5_gap10.parquet`, with 2,773 annotated intervals. The modeled mice are X1/X2/X4/X9/X10/X14/X15.
 
-| Fixed | Editable derived choices |
-| --- | --- |
-| Original recordings and annotation file | Event eligibility and positive/negative sample construction |
-| Train Days 0-7, validation Days 8/11, test Days 12/13 | Window size, stride, prediction interval, and exclusion margins |
-| Existing SeizureCNN and input grid `(1, 1, 55, 114)` | Cleaning, filtering, resampling, representation, frequency selection, and layout |
-| Current trainer, optimizer, loss, seed, and comparison budget | Training-fitted normalization and input transformations |
+| Purpose | Days | Permitted use |
+| --- | --- | --- |
+| Training | 0-7 | Episode support/query, pooled training, personalization, fitted statistics |
+| Validation | 8/11 | Checkpoint selection and inference |
+| Test | 12/13 | Explicit final inference using selected adapted checkpoints |
 
-The seven modeled mice are X1/X2/X4/X9/X10/X14/X15. The historical 978-event cohort, 28-second windows, and previous fixed sample counts are a past data recipe, not immutable raw data.
+Source recordings and annotations stay read-only. `prepare.py` records source identities and verifies row/timestamp alignment independently of model code. Existing source inventories can also be read; their old trainer-code hashes do not constrain this branch. New inventories use version 3 and contain source identity and day partitions only.
 
-Each candidate's sampling policy, window size, cleaning, and feature transformations apply consistently to all three day splits. Normalization statistics are fitted on training inputs and reused for validation and test. This preserves a common processing rule while retaining genuine differences between recording days.
+The shared sample recipe in `sample_pipeline.py` currently uses 112-second windows, a 7-3-minute positive interval, a 56-second grid plus reference offsets, balanced same-mouse/day negatives, ten-minute negative seizure margins, and existing event-history/postictal exclusions. Actual offsets are 0, 128, 56, and 112 seconds from the positive interval start. Training, validation, and test share these definitions. Changes to sampling alter the evaluated task and must be reported.
 
-## Main files
+## Learning procedure
 
-| File | Role |
-| --- | --- |
-| `prepare.py`, `source_data.py` | Fixed source inventory, annotation alignment, read-only recording access, and day partitions |
-| `sample_pipeline.py` | Editable sample construction, window policy, negative assignment, and signal cleaning |
-| `input_pipeline.py` | Editable features, normalization, and CNN input layout |
-| `train.py`, `models/cnn.py` | Fixed CNN and training controls |
-| `evaluate.py` | Fixed scoring, source snapshots, experiment records, restoration, and final testing |
-| `program.md` | Agent setup and autonomous experiment loop |
+1. Construct rolling episodes within each mouse using only Days 0-7. Every support day precedes every query day. Whole recording days remain together, so overlapping windows cannot cross support/query boundaries.
+2. Sample mice uniformly, then episodes uniformly within the mouse. Sample both classes without replacement from each side. Estimate one power scale from the sampled support windows and reuse it for query windows.
+3. In the inner loop, adapt CNN parameters with differentiable SGD on support labels. The shared frontend stays fixed during these inner updates.
+4. In the outer loop, differentiate query loss through the inner updates and update both the shared frontend and initial CNN parameters. This includes the higher-order frontend-to-adaptation gradient.
+5. At validation intervals, independently personalize a copy of the shared model for each mouse using all its Days 0-7. Fit its power scale on those training samples only. Use a fixed number of Adam steps; freeze the frontend by default.
+6. Select the shared checkpoint and its adapted per-mouse models by mean validation accuracy at threshold 0.5, breaking ties with lower mean validation log loss. Selected adapted checkpoints are retained exactly as evaluated.
 
-`protocol.lock.json` binds the raw source inventory, annotation hash, day splits, and fixed infrastructure. Both editable pipeline files are saved with each experiment. Candidate sample caches include source coordinates, labels, configuration, and checksums; original recordings stay read-only.
+The spectral frontend learns 520 parameters for Gaussian frequency bands, power compression, and positive temporal smoothing. Fixed preprocessing centers windows, resamples from 500 to 256 Hz, and computes a two-second STFT power basis over 1-40 Hz. Only this sample-local fixed basis is cached. Phase is excluded from this representation. The existing CNN consumes `(1, 1, 55, 114)` features.
 
-## Current control recipe
+BatchNorm running means and variances remain fixed in all meta, pooled, and personalization stages; affine normalization weights remain trainable. Dropout is enabled for support/pooled/personalization training and disabled for query evaluation and inference. Query predictions therefore do not depend on unrelated query-batch companions or mutate shared normalization buffers.
 
-The CNN architecture remains unchanged. Controls retain Adam at `5e-4`, batch size 32, label smoothing `0.1`, and a 100-epoch cap. Checkpoints maximize validation accuracy at threshold `0.5`, using lower validation loss for ties.
+## Setup and Docker commands
 
-The initial shared sample policy uses a 5-1-minute positive interval, 28-second windows, a 14-second grid, same-mouse/day negatives, ten-minute negative seizure margins, and the existing event-history exclusions. Dense windowing now applies equally to training, validation, and test. These sampling settings can be edited in `sample_pipeline.py`.
-
-The current input defaults retain 256 Hz resampling, log-STFT, and training-fitted frequency normalization. `arrange_input` maps alternative representations to the fixed CNN grid. `time_frequency` is the default layout; `frequency_time` transposes the matrix before resizing it to the same grid. A changed window size propagates to all splits before feature construction.
-
-## Setup and baseline
-
-The local Docker image uses Python 3.11, PyTorch 2.5.1, and CUDA 12.4. Rebuild when needed:
+Dependencies remain in `requirements.txt`; the existing `seizure-prediction-cnn:pytorch` image can execute the mounted source. Build a fresh image when needed:
 
 ```bash
 docker build -t seizure-prediction-cnn:pytorch .
+./run_meta.sh check
+./run_meta.sh prepare
 ```
 
-Prepare the source inventory once. This verifies source identity and annotation alignment; it does not generate a permanent fixed-window dataset:
-
-```bash
-./run_research.sh prepare
-```
-
-When research is requested, use a fresh session for the new scope:
-
-```bash
-export OUTPUT_DIR="$PWD/autoresearch-runs/data-study"
-./run_research.sh experiment --description 'baseline shared data recipe' > run.log 2>&1
-cat "$OUTPUT_DIR/results.tsv"
-cat "$OUTPUT_DIR/best.json"
-```
-
-Defaults:
+`run_meta.sh` uses these defaults:
 
 - `DATA_DIR=/data/users/jianchen/data/seizure_data`
-- `PREPARED_DIR=/data/users/jianchen/data/seizure_data-cache/autoresearch-source-v1`
-- `OUTPUT_DIR=<project>/autoresearch-runs/default`
+- `CACHE_DIR=/data/users/jianchen/data/seizure_data-cache/meta-learning`
+- `PREPARED_DIR=$CACHE_DIR/prepared`
+- `OUTPUT_DIR=$PWD/results/meta`
 - `IMAGE_NAME=seizure-prediction-cnn:pytorch`
+- `TRAIN_CPU_THREADS=4`
 
-`TRAIN_CPU_THREADS` defaults to 4. Use `--device cpu` for CPU execution and `--dry-run` to inspect commands. Each mouse has a 300-second training allowance; data assembly, preprocessing, and evaluation add overhead.
+Use `--device cpu` for CPU runs and `--dry-run` to inspect a launch command. Config paths are relative to the mounted project directory. All jobs terminate at their configured step budget.
 
-Earlier prepared-window directories and model-search results remain archived. Start a fresh session after changing the research scope or runtime; those historical results are not relabeled as new-pipeline runs.
-
-To start the agent:
-
-> Read program.md. Establish a baseline, then explore sample construction, cleaning, representation, normalization, and input layout. Apply each recipe consistently to train, validation, and test while preserving raw sources, day splits, the CNN, and training controls. Record validation accuracy and the associated data definition.
-
-Project checks and documentation work leave the experiment loop inactive.
-
-## Results and recovery
-
-The primary score is the arithmetic mean of seven mice's validation accuracies at threshold `0.5`. AUC, sensitivity, specificity, and loss are supporting metrics. The first successful run is `keep`; later accuracy must improve by more than `1e-6` for promotion. Failed attempts preserve the previous best.
-
-Each result records its sampling configuration, class counts, and evaluation-protocol fingerprint. Interpret scores with those definitions: changing eligibility, exclusions, or the prediction interval also changes the evaluated population or task.
+### Plan chronological tasks
 
 ```bash
-# After editing sample_pipeline.py or input_pipeline.py:
-./run_research.sh experiment --description 'shared window and input hypothesis' > run.log 2>&1
-
-# Recover the best pair of pipeline files, backing up current code first:
-./run_research.sh restore
+OUTPUT_DIR="$PWD/results/task-plan" ./run_meta.sh train --plan-only
 ```
 
-Worker logs, sampling summaries, event selection, histories, checkpoints, and predictions are under `$OUTPUT_DIR/experiments/<id>/X*/`.
+This validates episode construction and writes `episodes.json` without reading waveform windows or training. A mouse with insufficient labeled training days causes an explicit error rather than falling back to random window splitting.
 
-## Final evaluation
-
-After ending the search and requesting testing:
+### Train and compare
 
 ```bash
-./run_research.sh finalize
+OUTPUT_DIR="$PWD/results/meta" ./run_meta.sh train --config configs/meta.json
+OUTPUT_DIR="$PWD/results/pooled" ./run_meta.sh train --config configs/meta.json --algorithm pooled
 ```
 
-Final evaluation uses the selected sampler, input transformation, training-fitted statistics, and saved weights on Days 12/13. It writes `final.json` and per-window predictions and seals the session. Interrupted final evaluations can resume. Test metrics never guide candidate selection.
+The pooled control uses the same frontend, CNN, task samples, support-fitted scaling, outer-step count, and final-personalization budget. It minimizes supervised loss on concatenated episode support/query examples without an inner loop. Meta-training performs additional forward/backward operations; equal outer-step counts are not equal wall-clock compute.
+
+Compare completed runs without launching additional training:
+
+```bash
+python -m meta_learning.compare results/meta results/pooled --output results/comparison.json
+```
+
+The comparison rejects differences in configuration other than the algorithm, source versions, runtime, training samples, or validation sample fingerprints. It also reports optimization/validation wall time and peak allocated GPU memory for each run.
+
+`configs/meta.json` controls finite budgets, learning rates, task sizes, adaptation, smoothing, and gradient clipping. Defaults use 1,000 outer steps, four tasks per step, three inner SGD steps, and 100 Adam steps for per-mouse personalization. These are new workflow defaults, not the old per-mouse wall-clock search allowance. Use distinct output directories for different configurations or seeds.
+
+### Resume and validation replay
+
+```bash
+OUTPUT_DIR="$PWD/results/meta" ./run_meta.sh train --config configs/meta.json --resume
+OUTPUT_DIR="$PWD/results/meta" ./run_meta.sh validate
+```
+
+Resumption restores model, optimizer, task-sampler state, PyTorch CPU/CUDA RNG state, history, and selected checkpoint state. Configuration, source identities, code, and runtime must match. Work after the most recent completed checkpoint is replayed. A completed run with the same configuration exits without further optimization.
+
+Validation replay loads the selected adapted checkpoints and their saved normalization scales. It performs no personalization, gradient updates, or fitting.
+
+### Explicit final testing
+
+After choosing a run and ending model selection:
+
+```bash
+OUTPUT_DIR="$PWD/results/meta" ./run_meta.sh test
+```
+
+This is the only launcher action that reads test signals. It uses the selected per-mouse checkpoints and training-fitted scales, writes test predictions, and leaves model-selection records unchanged. The Python interface requires explicit `--split test` for this operation.
+
+### Short integration check
+
+```bash
+OUTPUT_DIR="$PWD/results/meta-smoke" ./run_meta.sh train --config configs/smoke.json
+OUTPUT_DIR="$PWD/results/meta-smoke" ./run_meta.sh validate
+```
+
+The smoke configuration uses X15, two outer steps, one inner step, and two personalization steps. It verifies execution rather than estimating model performance. Keep it separate from full-cohort comparisons. The pooled smoke control uses the same configuration plus `--algorithm pooled`.
 
 ## Local execution
 
+Use an environment matching `requirements.txt`. Examples:
+
 ```bash
-python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
-python -m pip install -r requirements.txt
-python prepare.py --output autoresearch-data
-python evaluate.py experiment --prepared-dir autoresearch-data \
-  --run-dir autoresearch-runs/local --device cuda --description baseline
+python prepare.py --output prepared
+python train.py --prepared-dir prepared --cache-dir /path/to/cache --run-dir results/meta --config configs/meta.json
+python evaluate.py --prepared-dir prepared --cache-dir /path/to/cache --run-dir results/meta
+python -m unittest discover -s tests -v
 ```
 
-The original `train_mouse_lfp.py` / `run_train.sh` and `main.py` / `run.sh` remain available for reproducing earlier MouseLFP and CHBMIT/FB/Kaggle2014Pred workflows. Their old sample definitions are separate from the new research pipeline.
+Data paths default to `SETTINGS_MouseLFP.json`. The Docker launcher supplies container paths explicitly.
 
-The CNN is based on Truong et al. (2018), *Convolutional neural networks for seizure prediction using intracranial and scalp electroencephalogram*, Neural Networks 105, 104-111. DOI: 10.1016/j.neunet.2018.04.018. The agent workflow follows [Karpathy autoresearch](https://github.com/karpathy/autoresearch).
+## Artifacts and reproducibility
+
+Each run retains:
+
+- `run.json`, `config.json`, and `source/`: configuration, source inventory identity, code hashes/snapshots, sampling policy, normalization/BatchNorm policy, and runtime.
+- `episodes.json` and `data/X*/`: chronological task definitions, event eligibility, split class counts, sample coordinates/fingerprints, and sampled signal-quality audits.
+- `history.json`, `status.json`, and `checkpoints/last.pt`: losses, gradient norms, validation summaries, progress, and resumable training state.
+- `selection.json` and `selected/step-*/`: selected shared model, adapted per-mouse models/scales, validation predictions, and metrics.
+- `evaluation/validation/` or `evaluation/test/`: inference-only reports and per-window predictions.
+
+Source preparation and finite-window quality audits establish identity, alignment, and the recorded audit findings. Inspect actual signal artifacts before attributing model behavior to physiology. Independent events and recording days, rather than overlapping window counts, determine the available evidence.
+
+The original supervised helpers in `train.py`, finite comparison scripts, legacy training entry points, and historical result folders are retained for reference. The primary `train.py` CLI now starts this meta-learning workflow. Prior records contain the source snapshots needed to reproduce their original environment and code.
+
+## Method references
+
+The outer representation objective follows the bilevel learning formulation in [Franceschi et al. (ICML 2018)](https://proceedings.mlr.press/v80/franceschi18a.html). The shared adaptable initialization is related to [MAML (ICML 2017)](https://proceedings.mlr.press/v70/finn17a.html). The spectral frontend is a compact Gaussian-band design; it retains a fixed STFT basis and is not an implementation of a raw-waveform LEAF or SincNet model.

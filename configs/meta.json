@@ -1,0 +1,22 @@
+{
+  "algorithm": "meta",
+  "targets": ["X1", "X2", "X4", "X9", "X10", "X14", "X15"],
+  "seed": 0,
+  "outer_steps": 1000,
+  "tasks_per_step": 4,
+  "inner_steps": 3,
+  "inner_lr": 0.01,
+  "outer_lr": 0.0005,
+  "support_per_class": 16,
+  "query_per_class": 16,
+  "min_support_days": 2,
+  "query_days": 1,
+  "eval_every": 100,
+  "checkpoint_every": 25,
+  "adaptation_steps": 100,
+  "adaptation_lr": 0.0005,
+  "adaptation_frontend": false,
+  "batch_size": 32,
+  "label_smoothing": 0.1,
+  "gradient_clip": 5.0
+}

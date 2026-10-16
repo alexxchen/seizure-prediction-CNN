@@ -14,3 +14,5 @@ results/
 autoresearch-data/
 autoresearch-runs/
 run.log
+prepared/
+meta-runs/

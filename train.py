@@ -1,4 +1,4 @@
-"""Fixed CNN and training recipe for input-pipeline research.
+"""Supervised reference trainer and entry point for cross-day meta-learning.
 
 Contract: fit(...) returns an object with predict_proba(raw_windows).
 load_predictor(...) restores that object without retraining for final evaluation.
@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from models.cnn import SeizureCNN
 from input_pipeline import FeatureDataset, features, normalization_stats
 
-# Fixed controls for input comparisons. Preserve the current committed recipe.
+# Defaults for the retained supervised reference implementation.
 CNN_INPUT_SHAPE = (1, 1, 55, 114)
 BATCH_SIZE = 32
 LEARNING_RATE = 5e-4
@@ -136,4 +136,5 @@ def load_predictor(work_dir, device):
 
 
 if __name__ == "__main__":
-    raise SystemExit("Run ./run_research.sh experiment; the frozen evaluator calls this recipe.")
+    from meta_learning.cli import train_main
+    train_main()

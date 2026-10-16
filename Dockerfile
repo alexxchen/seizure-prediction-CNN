@@ -16,4 +16,4 @@ RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt ninja==1.11.1.
     && chmod 1777 /tmp /var/tmp
 
 COPY . /workspace
-CMD ["python", "evaluate.py", "experiment", "--prepared-dir", "/prepared", "--data-dir", "/data/MouseLFP", "--run-dir", "/output"]
+CMD ["python", "train.py", "--help"]
