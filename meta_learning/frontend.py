@@ -1,9 +1,9 @@
-"""A gated, learnable spectral frontend between fixed STFT and the task CNN.
+"""A generic convolution + MLP frontend between fixed STFT and the task CNN.
 
-Only centered/resampled STFT magnitudes are cached. The frontend learns
-compression, sample-local normalization, global feature modulation, local and
-long-range time-frequency corrections, and temporal aggregation. Every learned
-stage starts at (or within a small residual of) the log-STFT average-pooling map.
+Only centered/resampled STFT magnitudes are cached. A strided time-frequency
+convolution trunk and a per-time-bin MLP learn a residual correction to the
+average-pooled log-STFT map. The zero-initialized output layer makes step 0
+equal the log-STFT baseline.
 """
 
 import hashlib
@@ -29,18 +29,14 @@ SPECTRUM_CONFIG = dict(source_hz=500, target_hz=256, frame_length=256,
                        hop_length=128, frequency_hz=[1, 40], center=False,
                        window="cosine_symmetric", end_padding="next_frame_multiple",
                        representation="unnormalized_magnitude")
-FRONTEND_CONFIG = dict(architecture="gated_spectral_frontend", input_frequency_bins=40,
-    input_frames=223,
-    compression="Per-frequency Box-Cox of (1 + magnitude) in log10 units; lambda=0 is log1p",
-    compression_bound=0.5,
-    normalization="Per-sample, per-frequency gated centering/scaling over time; gates start at 0",
-    normalization_epsilon=1e-4,
-    film="Per-sample time mean/std per frequency -> MLP -> per-frequency scale/shift",
-    film_hidden=32,
-    hidden_channels=16, time_dilations=[1, 2, 4, 8, 16, 32, 64], kernel=[3, 3], activation="gelu",
-    temporal_aggregation="Learnable linear frames->time_bins map initialized to adaptive average pooling",
-    time_bins=55, frequency_bins=40, head_initialization="zeros", checkpoint_batch_size=32,
-    initialization="Seeded; exact log-STFT average-pooling map at step 0 (identity gates, zero heads)")
+FRONTEND_CONFIG = dict(architecture="conv_mlp_residual", input_frequency_bins=40,
+    input_frames=223, input_transform="log1p_base10",
+    conv="Conv2d 1->16 3x3, then two Conv2d 16->16 3x3 with time stride 2 (223->112->56 frames); GELU",
+    conv_channels=16, time_strides=[2, 2],
+    mlp="Per time bin: LayerNorm(16x40) -> Linear(640->64) -> GELU -> Linear(64->40), zero-initialized",
+    mlp_hidden=64, residual_base="adaptive average pooling of the log-STFT map to the output grid",
+    time_bins=56, frequency_bins=40, checkpoint_batch_size=32,
+    initialization="Seeded; zero output layer, so step 0 equals the log-STFT average-pooling map")
 
 
 def fixed_spectrum_batch(raw):
@@ -108,88 +104,46 @@ class LogSTFTFrontend(nn.Module):
         return self.cnn_grid(self.log_map(magnitude))
 
 
-def box_cox_log10(magnitude, lam):
-    """Box-Cox of (1 + magnitude) in log10 units; lam == 0 is exactly log1p / ln(10)."""
-    log_value = torch.log1p(magnitude)
-    small = lam.abs() < 1e-4
-    safe = torch.where(small, torch.ones_like(lam), lam)
-    exact = torch.expm1(lam * log_value) / safe
-    series = log_value + 0.5 * lam * log_value.square()
-    return torch.where(small, series, exact) / math.log(10)
-
-
 class SpectralFrontend(nn.Module):
-    """Gated compression, normalization, FiLM, residual conv network, and time aggregation."""
+    """Strided conv trunk plus per-time-bin MLP, added to the pooled log-STFT map."""
 
     def __init__(self, seed=0):
         super().__init__()
         c = FRONTEND_CONFIG
         frequencies = torch.fft.rfftfreq(SPECTRUM_CONFIG["frame_length"], d=1 / 256)
         self.register_buffer("frequencies", frequencies[(frequencies >= 1) & (frequencies <= 40)])
-        bins, frames, hidden = c["input_frequency_bins"], c["input_frames"], c["hidden_channels"]
+        channels, bins = c["conv_channels"], c["input_frequency_bins"]
         # Initialize CPU layers without advancing caller CPU/CUDA RNG streams,
         # keeping the reference task CNN unchanged when the frontend is replaced.
         with torch.random.fork_rng(devices=[]):
             generator = torch.Generator(device="cpu").manual_seed(seed)
             torch.set_rng_state(generator.get_state())
-            # (1) Compression exponent per frequency; zero is the log1p map.
-            self.compression_raw = nn.Parameter(torch.zeros(bins))
-            # (2) Sample-local centering/scaling gates; zero preserves absolute amplitude.
-            self.center_gate = nn.Parameter(torch.zeros(bins))
-            self.scale_gate = nn.Parameter(torch.zeros(bins))
-            # (4) Global per-sample statistics modulate each frequency.
-            self.film = nn.Sequential(nn.Linear(2 * bins, c["film_hidden"]), nn.GELU(),
-                                      nn.Linear(c["film_hidden"], 2 * bins))
-            # (3) Local frequency and long-range dilated time convolutions.
-            self.stem = nn.Conv2d(1, hidden, 3, padding=1, padding_mode="replicate")
-            self.blocks = nn.ModuleList(
-                nn.Conv2d(hidden, hidden, 3, padding=(dilation, 1), dilation=(dilation, 1),
-                          padding_mode="replicate")
-                for dilation in c["time_dilations"])
-            self.head = nn.Conv2d(hidden, 1, 1)
-            # Zero heads make the initial map exactly log-STFT. Head weights receive
-            # gradients immediately; inner FiLM/conv layers follow once heads move.
-            for layer in (self.film[-1], self.head):
-                nn.init.zeros_(layer.weight)
-                nn.init.zeros_(layer.bias)
-        # (5) Linear temporal aggregation starts as adaptive average pooling.
-        reference = F.adaptive_avg_pool1d(torch.eye(frames).unsqueeze(0), c["time_bins"])[0].T
-        self.register_buffer("aggregation_reference", reference.contiguous())
-        self.aggregation_delta = nn.Parameter(torch.zeros_like(reference))
-
-    def compression_exponent(self):
-        return FRONTEND_CONFIG["compression_bound"] * torch.tanh(self.compression_raw)
+            layers = [nn.Conv2d(1, channels, 3, padding=1), nn.GELU()]
+            for stride in c["time_strides"]:
+                layers += [nn.Conv2d(channels, channels, 3, stride=(stride, 1), padding=1), nn.GELU()]
+            self.conv = nn.Sequential(*layers)
+            self.mlp = nn.Sequential(nn.LayerNorm(channels * bins), nn.Linear(channels * bins, c["mlp_hidden"]),
+                                     nn.GELU(), nn.Linear(c["mlp_hidden"], bins))
+            # Zero output: the initial map is exactly the pooled log-STFT baseline.
+            nn.init.zeros_(self.mlp[-1].weight)
+            nn.init.zeros_(self.mlp[-1].bias)
 
     def describe(self):
         with torch.no_grad():
-            exponent = self.compression_exponent()
-            gates = dict(compression_exponent=exponent, center_gate=self.center_gate,
-                         scale_gate=self.scale_gate)
-            summary = {name: dict(mean=float(value.mean()), min=float(value.min()), max=float(value.max()))
-                       for name, value in gates.items()}
-            summary["aggregation_delta_norm"] = float(self.aggregation_delta.norm())
+            state = {name: float(parameter.norm()) for name, parameter in self.named_parameters()
+                     if name.endswith("weight")}
         return dict(FRONTEND_CONFIG, parameters=sum(parameter.numel() for parameter in self.parameters()),
-                    state=summary)
+                    state=dict(weight_norms=state))
 
     def _forward_batch(self, magnitude):
-        c = FRONTEND_CONFIG
-        # (1) Magnitudes are nonnegative by construction; no hard floor is needed.
-        compressed = box_cox_log10(magnitude.transpose(1, 2).unsqueeze(1), self.compression_exponent())
-        mean = compressed.mean(dim=2, keepdim=True)
-        std = (compressed.var(dim=2, unbiased=False, keepdim=True) + c["normalization_epsilon"]).sqrt()
-        # (2) Per-sample statistics only; features never depend on batch companions.
-        normalized = (compressed - self.center_gate * mean) * torch.exp(-self.scale_gate * std.log())
-        # (4) FiLM from statistics of the compressed, unnormalized map.
-        scale, shift = self.film(torch.cat([mean.flatten(1), std.flatten(1)], dim=1)).chunk(2, dim=1)
-        features = normalized * (1 + scale[:, None, None]) + shift[:, None, None]
-        # (3) Residual network; time dilations reach the full 112-second window.
-        hidden = self.stem(features)
-        for block in self.blocks:
-            hidden = hidden + block(F.gelu(hidden))
-        features = features + self.head(F.gelu(hidden))
-        # (5) Learned linear map over time; frequencies stay on their native 1 Hz grid.
-        aggregation = self.aggregation_reference + self.aggregation_delta
-        return torch.einsum("ot,nctf->ncof", aggregation, features).unsqueeze(1)
+        base = LogSTFTFrontend.log_map(magnitude)
+        hidden = self.conv(base)
+        if hidden.shape[2] != FRONTEND_CONFIG["time_bins"]:
+            raise ValueError("Convolution strides do not produce the configured time bins")
+        # One token per output time bin: all channels and frequencies of that bin.
+        tokens = hidden.permute(0, 2, 1, 3).flatten(2)
+        residual = self.mlp(tokens).unsqueeze(1)
+        return (LogSTFTFrontend.cnn_grid(base).squeeze(1) + residual).unsqueeze(1)
 
     def forward(self, magnitude):
         expected = (FRONTEND_CONFIG["input_frequency_bins"], FRONTEND_CONFIG["input_frames"])

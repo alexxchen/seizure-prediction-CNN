@@ -1,0 +1,93 @@
+\begin{tikzpicture}[x=1cm,y=1cm]
+\path[use as bounding box] (0,0) rectangle (27.8,15.55);
+\node[section] at (0.2,15.3)
+  {Fixed temporal split for each mouse \(m\); all eligible support/query windows in the current configuration};
+\node[taskbox,text width=7.3cm,minimum height=1.35cm] (support) at (4.8,14.0)
+  {\textbf{Support \(S_m\): Days 0--7}\\CNN fitting and support-only BatchNorm statistics};
+\node[learnedbox,text width=7.3cm,minimum height=1.35cm] (query) at (13.6,14.0)
+  {\textbf{Validation query \(Q_m\): Days 8/11}\\Outer frontend gradient and checkpoint selection};
+\node[testbox,text width=7.5cm,minimum height=1.35cm] (test) at (23.4,14.0)
+  {\textbf{Test eval \(E_m\): Days 12/13}\\Inference and reporting only};
+
+\begin{scope}[on background layer]
+  \draw[panel,fill=taskbg!18] (0.7,4.1) rectangle (18.15,12.6);
+  \draw[panel,fill=heldoutbg!24] (19.0,2.1) rectangle (27.75,12.6);
+\end{scope}
+\node[section] at (1.0,12.25) {One task per mouse, once in every outer step};
+\node[learnedbox,text width=7.0cm,minimum height=1.1cm] (sfeat) at (4.8,11.0)
+  {\textbf{Shared frontend \(F_\theta(S_m)\)}\\Fixed \(\theta\) during this task's inner fitting};
+\node[learnedbox,text width=7.0cm,minimum height=1.1cm] (qfeat) at (13.6,11.0)
+  {\textbf{Same frontend \(F_\theta(Q_m)\)}\\Same \(\theta\) for every mouse in this outer step};
+\draw[flow] (support) -- (sfeat);
+\draw[flow] (query) -- (qfeat);
+
+\node[taskbox,text width=7.0cm,minimum height=2.2cm] (fit) at (4.8,8.45)
+  {\textbf{Fit task-local CNN on support labels}\\
+   \(w_m^{(K)},b_m^{(K)}=\operatorname{Fit}_{50\,\mathrm{epochs}}
+      (w_0,b_0;F_\theta(S_m),y_{S_m})\)\\
+   SGD lr 0.01, momentum 0.9; full shuffled epochs\\
+   Keep weights, momentum, and BN state within task\\
+   \(K\): all minibatch updates in the 50 epochs};
+\node[learnedbox,text width=7.0cm,minimum height=2.2cm] (qloss) at (13.6,8.45)
+  {\textbf{Query forward in CNN eval mode}\\
+   \(\ell_m(\theta)=\operatorname{CE}_{0.1}
+     (C_{w_m^{(K)},b_m^{(K)}}(F_\theta(Q_m)),y_{Q_m})\)\\
+   Support-fitted BN statistics; dropout disabled\\
+   Query labels supervise \(\theta\) through the full fit};
+\draw[flow] (sfeat) -- (fit);
+\draw[flow] (qfeat) -- (qloss);
+\draw[flow] (fit.east) -- node[label,text width=1.1cm] {fitted\\CNN + BN} (qloss.west);
+
+\node[taskbox,text width=7.0cm,minimum height=1.55cm] (init) at (4.8,5.65)
+  {\textbf{Fixed unlearned reference \((w_0,b_0)\)}\\
+   Reset for each mouse / outer step\\
+   CNN initialization is never meta-learned};
+\draw[flow] (init) -- (fit);
+\node[learnedbox,text width=7.0cm,minimum height=1.55cm] (grad) at (13.6,5.65)
+  {\textbf{Full frontend hypergradient \(g_m=\nabla_\theta\ell_m\)}\\
+   Direct query path + all support-training updates\\
+   Includes support BatchNorm EMA trajectory\\
+   RNG-preserving replay: 5 updates per segment};
+\draw[gradient] (qloss) -- (grad);
+
+\node[learnedbox,text width=15.0cm,minimum height=1.3cm] (update) at (9.4,2.9)
+  {\textbf{One outer update after all configured mice}\\
+   \(g=\frac{1}{M}\sum_{m=1}^{M}g_m,\qquad
+     \theta\leftarrow\operatorname{Adam}(\theta,g;\eta=10^{-4})\)\\
+   Equal mouse weights; gradient norm clipping at 5; only frontend parameters update};
+\draw[gradient] (grad.south) -- (13.6,3.85) -- (update.north -| grad.south);
+\draw[gradient] (update.west) -- (0.2,2.9) -- (0.2,11.0) -- (sfeat.west);
+\node[label,rotate=90,text=learned] at (0.2,7.2) {next outer step};
+
+\node[section,text=heldout] at (19.25,12.25) {Every 10 outer steps and at the final step};
+\node[testbox,text width=7.3cm,minimum height=2.0cm] (refit) at (23.35,10.7)
+  {\textbf{Fresh support-only fit for every mouse}\\
+   Freeze the updated shared frontend \(\theta\)\\
+   Reset CNN to \((w_0,b_0)\); fit on Days 0--7\\
+   Same optimizer and 50-epoch budget};
+\node[testbox,text width=7.3cm,minimum height=2.2cm] (score) at (23.35,7.35)
+  {\textbf{Evaluate both query and test}\\
+   Days 8/11: query log loss and accuracy\\
+   Days 12/13: test log loss and accuracy\\
+   Eval mode, frozen BN statistics, no gradients\\
+   Accuracy uses probability threshold 0.5};
+\node[testbox,text width=7.3cm,minimum height=2.2cm] (select) at (23.35,3.9)
+  {\textbf{Select by mean query log loss}\\
+   Minimum equally weighted mouse mean\\
+   After the matched support-only refit\\
+   Ordinary unsmoothed predictive log loss\\
+   Save shared frontend + fitted per-mouse CNNs};
+\draw[flow] (refit) -- (score);
+\draw[flow] (score) -- node[label] {query criterion} (select);
+\draw[flow,draw=heldout] (test.east) -- (27.5,14.0) -- (27.5,7.35) -- (score.east);
+\draw[flow] (update.east) -- (18.55,2.9) -- (18.55,10.7) -- (refit.west);
+
+\node[fixedbox,text width=12.6cm,minimum height=1.25cm] at (7.0,0.7)
+  {\textbf{Independent control: \texttt{log\_stft}}\\
+   Parameter-free pooled log-STFT; fit one CNN per mouse once.\\
+   Query/test inference after fitting; no outer updates or startup baseline.};
+\node[fixedbox,text width=12.6cm,minimum height=1.25cm] at (20.8,0.7)
+  {\textbf{Matched control: \texttt{pooled}}\\
+   Same frontend/CNN; direct supervision on support + query labels.\\
+   Same mouse schedule; discard auxiliary CNN before fresh support-only refitting.};
+\end{tikzpicture}

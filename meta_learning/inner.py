@@ -240,11 +240,31 @@ class _ReplayClassifierFit(torch.autograd.Function):
         return feature_gradient, None, None, None, None, None
 
 
+def calibrate_batchnorm(reference, parameters, buffers, features):
+    """Exact support statistics of the final weights, replacing the running EMA.
+
+    One training-mode pass over the full support with zero retention sets every
+    BatchNorm layer's statistics to its population mean/variance. The pass stays
+    differentiable, so query gradients include the dependence on these statistics.
+    """
+    calibrating = copy.deepcopy(reference).train()
+    for layer in calibrating.modules():
+        if isinstance(layer, AxisBatchNorm):
+            layer.momentum, layer.differentiable_stats = 0.0, True
+        elif isinstance(layer, torch.nn.Dropout):
+            layer.p = 0.0
+    _, updated = functional_call(_SupportForward(calibrating),
+        ({f"classifier.{name}": value for name, value in parameters.items()},
+         {f"classifier.{name}": value for name, value in buffers.items()}), (features,), strict=True)
+    return dict(zip(buffers, updated))
+
+
 def fit_classifier(reference, features, labels, config, *, differentiable, progress=None):
     """Train exactly the configured full epochs; optionally replay exact gradients.
 
     CNN weights, optimizer moments, and support BatchNorm statistics persist within a task. Support metrics
-    are diagnostic only; the final epoch supplies the classifier. A zero checkpoint interval enables ordinary
+    are diagnostic only; the final epoch supplies the classifier. With batchnorm_recalibration, evaluation
+    uses exact support statistics of the final weights instead of the warm-up-biased running EMA. A zero checkpoint interval enables ordinary
     full unrolling for small reference checks; final per-mouse fitting needs no
     hypergradient or stored training trajectory.
     """
@@ -254,6 +274,21 @@ def fit_classifier(reference, features, labels, config, *, differentiable, progr
         report = {}
         state = _ReplayClassifierFit.apply(features, labels, reference, config, progress, report)
         count = sum(1 for _ in reference.parameters())
-        return ClassifierFit(dict(zip((name for name, _ in reference.named_parameters()), state[:count])),
-                             dict(zip((name for name, _ in reference.named_buffers()), state[count:])), report)
-    return run_fit(reference, features, labels, config, differentiable, progress)
+        fit = ClassifierFit(dict(zip((name for name, _ in reference.named_parameters()), state[:count])),
+                            dict(zip((name for name, _ in reference.named_buffers()), state[count:])), report)
+    else:
+        fit = run_fit(reference, features, labels, config, differentiable, progress)
+    if not config.batchnorm_recalibration:
+        return fit
+    with torch.set_grad_enabled(differentiable and torch.is_grad_enabled()):
+        buffers = calibrate_batchnorm(reference, fit.parameters, fit.buffers,
+                                      features if differentiable else features.detach())
+    if not differentiable:
+        buffers = {name: value.detach() for name, value in buffers.items()}
+    with torch.no_grad():
+        loss, accuracy = classifier_loss(copy.deepcopy(reference).eval(), fit.parameters, buffers,
+                                         features.detach(), labels, config, return_accuracy=True)
+    fit.report.update(batchnorm="Support batch statistics during training; exact support statistics of the "
+                                "final weights for evaluation", calibrated_support_loss=float(loss),
+                      calibrated_support_accuracy=accuracy)
+    return ClassifierFit(fit.parameters, buffers, fit.report)

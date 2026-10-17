@@ -1,0 +1,79 @@
+\documentclass[10pt]{article}
+\usepackage[paperwidth=30cm,paperheight=21cm,margin=0.9cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,positioning,backgrounds}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\renewcommand{\familydefault}{\sfdefault}
+
+\definecolor{ink}{HTML}{183047}
+\definecolor{fixed}{HTML}{536779}
+\definecolor{fixedbg}{HTML}{F0F4F7}
+\definecolor{learned}{HTML}{006D77}
+\definecolor{learnedbg}{HTML}{E8F5F3}
+\definecolor{task}{HTML}{365DA8}
+\definecolor{taskbg}{HTML}{EDF2FC}
+\definecolor{heldout}{HTML}{9C6723}
+\definecolor{heldoutbg}{HTML}{FFF4E3}
+
+\tikzset{
+  box/.style={draw=fixed!70,fill=fixedbg,rounded corners=2mm,
+    line width=0.65pt,align=center,inner sep=5pt,font=\small,text=ink},
+  fixedbox/.style={box},
+  learnedbox/.style={box,draw=learned,fill=learnedbg},
+  taskbox/.style={box,draw=task,fill=taskbg},
+  testbox/.style={box,draw=heldout,fill=heldoutbg},
+  flow/.style={-{Stealth[length=2.1mm,width=1.5mm]},draw=ink,line width=0.85pt},
+  gradient/.style={flow,draw=learned,dashed,line width=1pt},
+  label/.style={font=\scriptsize,text=ink,align=center,fill=white,inner sep=2pt},
+  section/.style={font=\bfseries\small,text=ink,anchor=west},
+  panel/.style={draw=fixed!25,rounded corners=2.5mm,line width=0.6pt,fill=white},
+}
+
+\newcommand{\heading}[2]{%
+  {\LARGE\bfseries\color{ink}#1}\par\vspace{2mm}
+  {\small\color{fixed}#2}\par\vspace{2mm}}
+
+\begin{document}
+\heading{MouseLFP: current network architecture}{%
+  Fixed spectral basis \(\longrightarrow\) shared residual frontend
+  \(\longrightarrow\) task-local CNN. Shapes include batch size \(B\).}
+\begin{center}
+\input{figures/network.tex}
+\end{center}
+\vfill
+{\scriptsize\color{fixed}
+  Implementation: \texttt{meta\_learning/frontend.py},
+  \texttt{meta\_learning/model.py}, \texttt{models/cnn.py}.
+  Teal: shared frontend parameters \(\theta\); blue: mouse-specific CNN parameters \(w_m\).
+  Snapshot: 2026-10-16.}
+
+\newpage
+\heading{MouseLFP: frontend-only bilevel learning}{%
+  One fixed task per configured mouse; support fits the CNN, query supervises the frontend,
+  and test is inference only.}
+\begin{center}
+\input{figures/training.tex}
+\end{center}
+\vfill
+{\scriptsize\color{fixed}
+  Current \texttt{configs/meta.json}: targets=[X2], \(M=1\), 1,000 outer steps,
+  batch size 32, 50 inner epochs, fixed shuffle seed 0, label smoothing 0.1.
+  Full cohort: X1/X2/X4/X9/X10/X14/X15 (\(M=7\)).}
+
+\newpage
+\heading{MouseLFP: inner optimization unrolled as a recurrent graph}{%
+  One mouse, one outer step. The recurrent state is the CNN, momentum, and BatchNorm state;
+  each transition consumes one support minibatch.}
+\begin{center}
+\input{figures/unrolled.tex}
+\end{center}
+\vfill
+{\scriptsize\color{fixed}
+  Support: Days 0--7. Query: Days 8/11. All intermediate updates represented by the ellipsis
+  participate in backpropagation. Test Days 12/13 are inference only.
+  Implementation: \texttt{meta\_learning/inner.py} and \texttt{meta\_learning/algorithms.py}.}
+\end{document}

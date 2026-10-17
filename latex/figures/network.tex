@@ -1,0 +1,107 @@
+% Shape conventions: Conv2d = B,C,T,F; CNN input = B,C,E,T,F.
+\begin{tikzpicture}[x=1cm,y=1cm]
+\path[use as bounding box] (0,0) rectangle (27.8,15.6);
+
+\node[section] at (0.1,15.45) {1\quad Fixed preprocessing (no fitted normalization statistics)};
+\node[fixedbox,text width=3.0cm,minimum height=1.65cm] (raw) at (1.8,13.95)
+  {\textbf{LFP window}\\112 s at 500 Hz\\\(B\times56{,}000\)};
+\node[fixedbox,text width=6.0cm,minimum height=1.65cm] (prep) at (7.3,13.95)
+  {\textbf{Center \(\to\) resample \(\to\) STFT}\\
+   Per-window mean removal; 500 \(\to\) 256 Hz\\
+   Cosine window 256; hop 128; end zero-padding\\
+   Unnormalized magnitude; retain 1--40 Hz};
+\node[fixedbox,text width=3.2cm,minimum height=1.65cm] (mag) at (12.9,13.95)
+  {\textbf{Magnitude \(M\)}\\\(B\times40\times223\)\\Fixed basis cached};
+\node[fixedbox,text width=7.1cm,minimum height=1.65cm] (log) at (21.0,13.95)
+  {\textbf{Fixed log transform + transpose}\\
+   \(L=\log(1+M)/\ln(10)\)\\
+   Time \(\times\) frequency map: \(B\times1\times223\times40\)};
+\draw[flow] (raw) -- (prep);
+\draw[flow] (prep) -- (mag);
+\draw[flow] (mag) -- (log);
+
+\begin{scope}[on background layer]
+  \draw[panel,fill=learnedbg!22] (0.05,6.85) rectangle (27.1,11.85);
+  \draw[panel,fill=taskbg!22] (0.05,0.15) rectangle (27.7,5.9);
+\end{scope}
+\node[section,text=learned] at (0.5,11.5)
+  {2\quad Shared convolution + MLP residual frontend \(F_\theta\) (49,704 learnable parameters)};
+
+\coordinate (split) at (0.15,9.95);
+\draw[flow] (log.south) -- (21.0,12.5) -- (0.15,12.5) -- (split) -- (1.0,9.95);
+\fill[learned] (split) circle (1.5pt);
+\node[learnedbox,text width=3.5cm,minimum height=1.75cm] (conv1) at (3.0,9.95)
+  {\textbf{Conv2d + GELU}\\\(1\to16\), \(3\times3\)\\
+   Stride \((1,1)\), pad 1\\\(B\times16\times223\times40\)};
+\node[learnedbox,text width=3.5cm,minimum height=1.75cm] (conv2) at (7.6,9.95)
+  {\textbf{Conv2d + GELU}\\\(16\to16\), \(3\times3\)\\
+   Stride \((2,1)\), pad 1\\\(B\times16\times112\times40\)};
+\node[learnedbox,text width=3.5cm,minimum height=1.75cm] (conv3) at (12.2,9.95)
+  {\textbf{Conv2d + GELU}\\\(16\to16\), \(3\times3\)\\
+   Stride \((2,1)\), pad 1\\\(B\times16\times56\times40\)};
+\node[learnedbox,text width=6.5cm,minimum height=1.75cm] (mlp) at (18.9,9.95)
+  {\textbf{Per-time-bin MLP}\\
+   Reshape to \(B\times56\times640\); LayerNorm(640)\\
+   Linear \(640\to64\) \(\to\) GELU \(\to\) Linear \(64\to40\)\\
+   \textbf{Last layer: zero weights and bias}\\Residual: \(B\times1\times56\times40\)};
+\node[circle,draw=learned,fill=white,line width=1pt,minimum size=7mm,inner sep=0pt,
+  font=\Large,text=learned] (sum) at (24.7,9.95) {\(+\)};
+\draw[flow] (conv1) -- (conv2);
+\draw[flow] (conv2) -- (conv3);
+\draw[flow] (conv3) -- (mlp);
+\draw[flow] (mlp) -- (sum);
+
+\node[fixedbox,text width=10.7cm,minimum height=0.9cm] (base) at (12.2,7.8)
+  {\textbf{Residual base:} adaptive average pool \(L\) to \(B\times1\times56\times40\)\\
+   Frequency axis stays at 40 bins; absolute amplitude is retained};
+\draw[flow] (split) -- (0.15,7.8) -- (base.west);
+\draw[flow] (base.east) -- (24.7,7.8) -- (sum.south);
+\node[label,text=learned] at (24.7,11.0) {\(F_\theta(M)\)};
+\node[label,fill=learnedbg!22] at (7.9,8.75)
+  {Sample-local features; frontend has no BatchNorm or dropout};
+\node[section,text=task] at (0.3,5.55)
+  {3\quad Task-local CNN \(C_{w_m}\): reset from a fixed unlearned reference for each mouse};
+\node[taskbox,text width=3.7cm,minimum height=2.7cm] (cnn1) at (2.25,3.5)
+  {\textbf{CNN block 1}\\
+   AxisBN (electrode axis)\\
+   Conv3d \(1\to16\), \(1\times5\times5\)\\
+   Stride \((1,2,2)\), pad \((0,2,2)\)\\
+   ReLU; max pool \(1\times2\times2\)\\
+   Ceil mode; squeeze E\\
+   \(B\times16\times14\times10\)};
+\node[taskbox,text width=3.6cm,minimum height=2.7cm] (cnn2) at (7.2,3.5)
+  {\textbf{CNN block 2}\\
+   AxisBN (16 channels)\\
+   Conv2d \(16\to32\), \(3\times3\)\\
+   Stride 1, padding 0\\
+   ReLU; max pool \(2\times2\)\\
+   \(B\times32\times6\times4\)};
+\node[taskbox,text width=3.6cm,minimum height=2.7cm] (cnn3) at (12.1,3.5)
+  {\textbf{CNN block 3}\\
+   AxisBN (32 channels)\\
+   Conv2d \(32\to64\), \(3\times3\)\\
+   Stride 1, padding 0\\
+   ReLU; max pool \(2\times2\)\\
+   \(B\times64\times2\times1\)};
+\node[taskbox,text width=3.9cm,minimum height=2.7cm] (dense) at (17.25,3.5)
+  {\textbf{Dense classifier}\\
+   Flatten \(\to\) 128 features\\Dropout \((p=0)\)\\
+   Linear \(128\to128\)\\\textbf{Sigmoid}\\Dropout \((p=0)\)};
+\node[taskbox,text width=5.7cm,minimum height=2.7cm] (output) at (24.15,3.5)
+  {\textbf{Binary prediction}\\Linear \(128\to2\): logits \(B\times2\)\\
+   Training: cross-entropy on logits\\
+   Inference: softmax \(\to p(y=1)\)\\Accuracy threshold: 0.5};
+\draw[flow] (sum.east) -- (27.45,9.95) -- (27.45,6.4) -- (0,6.4) -- (0,3.5) -- (cnn1.west);
+\node[label] at (15.0,6.4)
+  {CNN input: \(B\times1\times1\times56\times40\) (channel, electrode, time, frequency)};
+\draw[flow] (cnn1) -- (cnn2);
+\draw[flow] (cnn2) -- (cnn3);
+\draw[flow] (cnn3) -- (dense);
+\draw[flow] (dense) -- (output);
+\node[align=left,text width=26.3cm,font=\small,text=ink] at (13.8,0.95)
+  {\textbf{Initialization:} \(F_{\theta_0}(M)=\operatorname{AvgPool}_{56\times40}(L)\),
+   exactly the pure log-STFT baseline; initialization preserves caller RNG streams.\\[2pt]
+   \textbf{CNN state:} support uses training-mode BatchNorm; query/test use eval mode
+   with support-fitted statistics (EMA retention 0.99, \(\epsilon=10^{-3}\)).
+   All CNN fitting uses dropout \(p=0\).};
+\end{tikzpicture}

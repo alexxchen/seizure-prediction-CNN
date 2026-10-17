@@ -6,7 +6,7 @@ from torch import nn
 from meta_learning.frontend import SpectralFrontend
 from models.cnn import SeizureCNN
 
-CNN_INPUT_SHAPE = (1, 1, 55, 40)
+CNN_INPUT_SHAPE = (1, 1, 56, 40)
 
 
 class MetaModel(nn.Module):

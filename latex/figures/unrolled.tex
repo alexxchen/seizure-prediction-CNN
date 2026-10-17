@@ -1,0 +1,110 @@
+% Forward dependencies and reverse-mode adjoints of one complete inner fit.
+\begin{tikzpicture}[x=1cm,y=1cm]
+\path[use as bounding box] (0,0) rectangle (27.8,15.55);
+
+\node[learnedbox,text width=13.0cm,minimum height=0.85cm] (theta) at (13.9,14.85)
+  {\textbf{One shared frontend parameter vector \(\theta\)}\\
+   Held fixed during all \(K\) inner updates; receives the accumulated outer gradient};
+
+% Support examples and the query branch are distinct inputs.
+\node[taskbox,text width=3.2cm,minimum height=1.05cm] (batch0) at (4.0,12.3)
+  {\textbf{Support minibatch 0}\\\((x_0,y_0)\)};
+\node[taskbox,text width=3.2cm,minimum height=1.05cm] (batch1) at (10.4,12.3)
+  {\textbf{Support minibatch 1}\\\((x_1,y_1)\)};
+\node[taskbox,text width=3.2cm,minimum height=1.05cm] (batchlast) at (18.0,12.3)
+  {\textbf{Last support batch}\\\((x_{K-1},y_{K-1})\)};
+\node[learnedbox,text width=3.2cm,minimum height=1.05cm] (querydata) at (25.4,12.3)
+  {\textbf{All query examples}\\\((x_Q,y_Q)\)};
+
+\node[learnedbox,text width=3.2cm,minimum height=0.95cm] (front0) at (4.0,10.45)
+  {\textbf{Frontend \(F_\theta\)}\\\(z_0=F_\theta(x_0)\)};
+\node[learnedbox,text width=3.2cm,minimum height=0.95cm] (front1) at (10.4,10.45)
+  {\textbf{Frontend \(F_\theta\)}\\\(z_1=F_\theta(x_1)\)};
+\node[learnedbox,text width=3.2cm,minimum height=0.95cm] (frontlast) at (18.0,10.45)
+  {\textbf{Frontend \(F_\theta\)}\\\(z_{K-1}=F_\theta(x_{K-1})\)};
+\node[learnedbox,text width=3.2cm,minimum height=0.95cm] (frontq) at (25.4,10.45)
+  {\textbf{Same frontend \(F_\theta\)}\\\(z_Q=F_\theta(x_Q)\)};
+\foreach \a/\b in {batch0/front0,batch1/front1,batchlast/frontlast,querydata/frontq}
+  \draw[flow] (\a.south) -- (\b.north);
+
+% Shared-parameter broadcast; parallel dashed routes collect its adjoints.
+\draw[flow,draw=learned] ([xshift=-2mm]theta.south) -- (13.7,13.6);
+\draw[draw=learned,line width=0.85pt] (6.0,13.6) -- (27.4,13.6);
+\draw[gradient] (27.6,13.98) -- (14.1,13.98) -- ([xshift=2mm]theta.south);
+\draw[draw=learned,dashed,line width=1pt] (6.25,13.98) -- (14.1,13.98);
+\foreach \front/\lane/\reverse in
+  {front0/6.0/6.25,front1/12.4/12.65,frontlast/20.0/20.25,frontq/27.4/27.6} {
+  \draw[flow,draw=learned] (\lane,13.6) -- (\lane,10.6) -- ([yshift=1.5mm]\front.east);
+  \draw[draw=learned,dashed,line width=1pt]
+    ([yshift=-1.5mm]\front.east) -- (\reverse,10.3) -- (\reverse,13.98);
+}
+
+\node[taskbox,text width=0.9cm,minimum height=1.0cm] (h0) at (0.85,7.5) {\(h_0\)};
+\node[taskbox,text width=3.0cm,minimum height=2.05cm] (u0) at (4.0,7.5)
+  {\textbf{Optimizer \(U_0\)}\\Support gradient\\
+   SGD + momentum\\Support BN EMA};
+\node[taskbox,text width=0.9cm,minimum height=1.0cm] (h1) at (7.2,7.5) {\(h_1\)};
+\node[taskbox,text width=3.0cm,minimum height=2.05cm] (u1) at (10.4,7.5)
+  {\textbf{Optimizer \(U_1\)}\\Support gradient\\
+   SGD + momentum\\Support BN EMA};
+\node[taskbox,text width=0.9cm,minimum height=1.0cm] (h2) at (13.6,7.5) {\(h_2\)};
+\node[minimum width=0.7cm,minimum height=1.0cm,font=\Large,text=ink] (dots) at (15.1,7.5) {\(\cdots\)};
+\node[taskbox,text width=3.0cm,minimum height=2.05cm] (ulast) at (18.0,7.5)
+  {\textbf{Optimizer \(U_{K-1}\)}\\Support gradient\\
+   SGD + momentum\\Support BN EMA};
+\node[taskbox,text width=0.9cm,minimum height=1.0cm] (hk) at (21.4,7.5) {\(h_K\)};
+\node[learnedbox,text width=3.4cm,minimum height=2.05cm] (loss) at (25.4,7.5)
+  {\textbf{Query loss \(L_Q\)}\\
+   \(\operatorname{CE}_{0.1}(C_{w_K,b_K}(z_Q),y_Q)\)\\
+   CNN eval mode\\Support-fitted BN statistics\\Final CNN after all \(K\) updates};
+
+% Forward state evolution and reverse query adjoints run in opposite directions.
+\foreach \a/\b in {h0/u0,u0/h1,h1/u1,u1/h2,h2/dots,dots/ulast,ulast/hk,hk/loss} {
+  \draw[flow] ([yshift=2.5mm]\a.east) -- ([yshift=2.5mm]\b.west);
+  \draw[gradient] ([yshift=-2.5mm]\b.west) -- ([yshift=-2.5mm]\a.east);
+}
+
+% Feature inputs and their hypergradients; labels bypass the frontend.
+\foreach \front/\cell/\batch/\labelx in
+  {front0/u0/batch0/1.8,front1/u1/batch1/8.2,frontlast/ulast/batchlast/15.8,frontq/loss/querydata/23.2} {
+  \draw[flow] ([xshift=-1mm]\front.south) -- ([xshift=-1mm]\cell.north);
+  \draw[gradient] ([xshift=6mm]\cell.north) -- ([xshift=6mm]\front.south);
+  \draw[flow] (\batch.west) -- (\labelx,12.3) -- (\labelx,9.15)
+    -- ([xshift=-9mm]\cell.north |- 0,9.15) -- ([xshift=-9mm]\cell.north);
+}
+\node[label] at (1.8,10.8) {\(y_0\)};
+\node[label] at (8.2,10.8) {\(y_1\)};
+\node[label] at (15.8,10.8) {\(y_{K-1}\)};
+\node[label] at (23.2,10.8) {\(y_Q\)};
+\node[label,text=learned,anchor=west,text width=1.25cm] at (26.15,9.55) {direct query\\path};
+\node[label] at (15.65,8.2) {\(h_{K-1}\)};
+
+\node[align=center,font=\scriptsize,text=ink,text width=3.6cm] at (1.9,5.75)
+  {\textbf{Fixed initial state}\\Unlearned \(w_0\); \(v_0=0\); reset BN};
+\draw[flow] (5.0,5.75) -- (6.1,5.75);
+\node[anchor=west,font=\small,text=ink] at (6.3,5.75) {forward computation};
+\draw[gradient] (12.0,5.75) -- (13.1,5.75);
+\node[anchor=west,font=\small,text=learned] at (13.3,5.75)
+  {query gradient: every update + each frontend use};
+
+\node[fixedbox,text width=12.9cm,minimum height=3.55cm] at (7.0,2.65)
+  {\textbf{The recurrent state and update rule}\\[3pt]
+   \(h_t=(w_t,v_t,b_t)\): CNN weights, momentum, BN statistics\\[4pt]
+   \(\widetilde g_t=\operatorname{ClipNorm}_{5}
+      \bigl(\nabla_{w_t}\operatorname{CE}_{0.1}(C^{\mathrm{train}}_{w_t}(z_t),y_t)\bigr)\)\\[4pt]
+   \(v_{t+1}=0.9v_t+\widetilde g_t,\qquad w_{t+1}=w_t-0.01v_{t+1}\)\\[4pt]
+   \(b_{t+1}=0.99b_t+0.01\,\widehat b_t\)
+   \quad(support batch means / biased variances)\\[4pt]
+   \(K=50\,\lceil |S_m|/32\rceil\): all minibatches of all 50 complete epochs};
+\node[learnedbox,text width=12.9cm,minimum height=3.55cm] at (20.8,2.65)
+  {\textbf{Backpropagation through the complete optimizer trajectory}\\[3pt]
+   \(\lambda_K=\nabla_{h_K}L_Q,\qquad
+      \lambda_t=\left(\dfrac{\partial U_t}{\partial h_t}\right)^{\!\top}\lambda_{t+1}\)\\[5pt]
+   \(\displaystyle\nabla_\theta L_Q=
+      \underbrace{\left.\nabla_\theta L_Q\right|_{h_K\,\mathrm{fixed}}}_{\text{direct query frontend path}}
+      +\underbrace{\sum_{t=0}^{K-1}
+       \left(\frac{\partial U_t}{\partial\theta}\right)^{\!\top}\lambda_{t+1}}_{\text{all support-training paths}}\)\\[5pt]
+   \(h_{t+1}=U_t(h_t;\theta)=U(h_t,F_\theta(x_t),y_t)\).\\[3pt]
+   Replay recomputes 5-update segments and preserves the full gradient.\\
+   Outer optimization updates only \(\theta\); each new task resets \(h_0\).};
+\end{tikzpicture}

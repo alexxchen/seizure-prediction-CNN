@@ -149,7 +149,7 @@ def log_stft_baseline(initial, store, config, device, run_dir, identity):
             save_predictions(path.parent, predictions[mouse], report["subjects"][mouse],
                              report["eval"]["subjects"][mouse])
         report.update(identity=identity, frontend_type="pure_log_stft", frontend_parameters=0,
-                      description="Fixed log1p STFT and adaptive average pooling to the native 55x40 grid; no learned stages; "
+                      description="Fixed log1p STFT and adaptive average pooling to the native 56x40 grid; no learned stages; "
                                   "fresh per-mouse CNN trained on Days 0-7; query Days 8/11; eval Days 12/13",
                       adapted_models=records, wall_seconds=time.monotonic() - started)
         # Publish the completion marker only after all per-mouse artifacts exist.
@@ -230,7 +230,9 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                          tasks_per_step=0 if config.algorithm == "log_stft" else len(config.targets),
                                          episodes="One fixed train-support/validation-query task per mouse", gradient_reduction="Mean per mouse"),
                       normalization="Identity (scale=1) before the neural frontend; no fitted statistics",
-                      batchnorm="Support batch statistics and per-task running EMA; query/test use frozen support EMA; full EMA hypergradient",
+                      batchnorm=("Support batch statistics during training; query/test use exact support statistics of the final "
+                                 "weights, recalibrated differentiably after each fit" if config.batchnorm_recalibration else
+                                 "Support batch statistics and per-task running EMA; query/test use frozen support EMA; full EMA hypergradient"),
                       inner_shuffles=("Fresh window order and minibatch shuffles every outer step"
                                       if config.inner_shuffle_seed is None else
                                       f"Fixed per task: seed {config.inner_shuffle_seed} + task index; "

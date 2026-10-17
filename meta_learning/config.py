@@ -18,6 +18,7 @@ class Config:
     inner_checkpoint_steps: int = 5
     inner_log_every: int = 0
     inner_shuffle_seed: int | None = None
+    batchnorm_recalibration: bool = True
     inner_optimizer: str = "sgd"
     inner_lr: float = 5e-4
     inner_momentum: float = 0.9
@@ -52,6 +53,8 @@ class Config:
             raise ValueError("inner_checkpoint_steps must be a nonnegative integer")
         if type(self.inner_log_every) is not int or self.inner_log_every < 0:
             raise ValueError("inner_log_every must be a nonnegative integer (0 logs only the final epoch)")
+        if type(self.batchnorm_recalibration) is not bool:
+            raise ValueError("batchnorm_recalibration must be true or false")
         if self.inner_shuffle_seed is not None and (
                 type(self.inner_shuffle_seed) is not int or self.inner_shuffle_seed < 0):
             raise ValueError("inner_shuffle_seed must be null (fresh shuffles) or a nonnegative integer")

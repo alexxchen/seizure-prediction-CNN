@@ -28,7 +28,7 @@ Run the pure log-STFT baseline separately when needed:
 OUTPUT_DIR="$PWD/results/log-stft" ./run_meta.sh train --config configs/meta.json --algorithm log_stft
 ```
 
-`log_stft` uses `log1p(magnitude) / ln(10)` and adaptive average pooling to the native `55 × 40` grid, with zero learnable frontend parameters. It equals the gated frontend's initial representation. It fits one fresh CNN per configured mouse on all Days 0-7 using the configured seed, optimizer, fixed epochs, dropout, and batch size, then scores query Days 8/11 and eval Days 12/13. It has no outer optimizer or updates; `outer_steps`, `eval_every`, and `checkpoint_every` do not repeat this fitting. All seven mice are included by the full configuration.
+`log_stft` uses `log1p(magnitude) / ln(10)` and adaptive average pooling to the native `56 × 40` grid, with zero learnable frontend parameters. It equals the conv + MLP frontend's initial representation. It fits one fresh CNN per configured mouse on all Days 0-7 using the configured seed, optimizer, fixed epochs, dropout, and batch size, then scores query Days 8/11 and eval Days 12/13. It has no outer optimizer or updates; `outer_steps`, `eval_every`, and `checkpoint_every` do not repeat this fitting. All seven mice are included by the full configuration.
 
 Baseline reports are saved under `baseline/log_stft/report.json`, with per-mouse checkpoints, query/test predictions, and metrics. The report root is the validation query; its `eval` field holds the test report. `selection.json` references the fitted baseline checkpoints, so `validate` and `test` replay commands work with the baseline run directory. Its checkpoints identify `frontend_type="pure_log_stft"`. A compatible completed baseline is reused with `--algorithm log_stft --resume` after identity/checkpoint checks. Keep this output directory separate from meta and pooled runs. Learned runs record their own query/eval metrics without automatic baseline-difference fields.
 
@@ -39,41 +39,36 @@ Baseline reports are saved under `baseline/log_stft/report.json`, with per-mouse
 5. Every `eval_every` steps and at the final step, freeze the updated shared frontend and train a fresh CNN for each mouse using all its Days 0-7. Reset classifier weights from the run seed, including for the pooled control; no learned CNN weights transfer into this stage. Keep the same identity normalization used in the episodes. Use the same optimizer, dropout, and fixed epoch budget as inner training. Evaluate this CNN on both validation query and test eval without gradients or parameter updates.
 6. Select the shared frontend and its trained per-mouse classifiers by minimum seven-mouse mean query log loss. Test metrics are reporting only and cannot influence checkpoint selection. Report accuracy at threshold 0.5 for both partitions. Selected per-mouse checkpoints are retained exactly as evaluated. The shared `frontend.pt` artifact contains frontend weights only.
 
-The full configuration trains for exactly `inner_epochs` epochs (currently 50); the Config class default also remains 50. The full configuration uses SGD at learning rate 0.01, momentum 0.9, batch size 32, and classifier dropout 0; its outer Adam learning rate is 0.0001. The Config class default inner learning rate remains 0.0005. Support loss and accuracy are logged for diagnosis and never shorten training. The outer objective uses the classifier after the configured final epoch, without rollback to the best support epoch. Final per-mouse CNN fitting uses the same fixed budget. Adam remains available through `inner_optimizer="adam"` with the configured betas and epsilon. The outer frontend optimizer remains Adam.
+The full configuration trains for exactly `inner_epochs` epochs (currently 20); the Config class default remains 50. The full configuration uses plain SGD at learning rate 0.001 without momentum, batch size 32, and classifier dropout 0; its outer Adam learning rate is 0.0001. The Config class default inner learning rate remains 0.0005. Support loss and accuracy are logged for diagnosis and never shorten training. The outer objective uses the classifier after the configured final epoch, without rollback to the best support epoch. Final per-mouse CNN fitting uses the same fixed budget. Adam remains available through `inner_optimizer="adam"` with the configured betas and epsilon. The outer frontend optimizer remains Adam.
 
 Every meta-training step prints a `query_task` record after each mouse's inner fit and a `query_step` summary after all mice finish. These use all validation Days 8/11 query windows by default, before that step's outer update. Records include the label-smoothed outer loss, accuracy at threshold 0.5, and sample counts; means weight each mouse equally. Query metrics supervise the frontend and never control inner stopping. Per-task metrics are saved in `inner/step-*/task-*.json`; per-step summaries are saved under `query` in `history.json`.
 
 At evaluation intervals, `query_eval_step` prints query and test means for the updated frontend after fresh support-only CNN fitting. History stores these as `query_refit` and `eval`, and reports are saved under `query/step-*.json` and `eval/step-*.json`. The refitted query loss used for checkpoint selection is ordinary unsmoothed predictive log loss. It differs from the smoothed, pre-update training query loss; both timings and definitions are explicit. The standalone log-STFT algorithm uses the same refitting seeds/budget and predictive metrics.
 
-This is a fixed-trajectory bilevel representation objective. Completing the configured epochs is a training budget, not a claim of convergence. Each fit records `epochs_requested`, `epochs_run`, and `stop_reason="fixed_epochs"`. Every update in the fixed trajectory supplies the query hypergradient; there is no loss-dependent stopping decision. This implementation does not use implicit differentiation or first-order/truncated approximations. Forward fitting saves detached CNN/optimizer/BatchNorm-state boundaries, global step counts, and RNG states in CPU memory. The running-statistic EMA is part of the differentiable inner state; query gradients include the dependence on support-fitted statistics. Replay restores the statistics for each segment and leaves saved/reference statistics unchanged. Backward replays one segment at a time, carrying parameter and optimizer-state adjoints between segments and accumulating the support-feature gradient. Adam retains both moments and global bias correction; its square-root calculation uses a finite zero subgradient without changing forward update values. GPU activation memory depends on segment length; CPU checkpoint storage grows with trajectory length. The implementation computes the first outer gradient and does not support differentiating that outer gradient again.
+The inner settings were chosen for a smooth meta objective. With SGD at learning rate 0.01 and momentum 0.9, X2 query loss changed by 0.01-0.2 under frontend perturbations of norm 1e-6 to 1e-4 (5 to 50 epochs), so the hypergradient described local chaos rather than a descent direction; even a fixed shuffle did not make the objective usable. With learning rate 0.001 and no momentum (20 epochs), the loss along the negative hypergradient follows the first-order prediction up to a parameter step of 1e-2 and keeps decreasing at 1e-1. Changing these settings should be rechecked with a similar one-dimensional slice. This is a fixed-trajectory bilevel representation objective. Completing the configured epochs is a training budget, not a claim of convergence. Each fit records `epochs_requested`, `epochs_run`, and `stop_reason="fixed_epochs"`. Every update in the fixed trajectory supplies the query hypergradient; there is no loss-dependent stopping decision. This implementation does not use implicit differentiation or first-order/truncated approximations. Forward fitting saves detached CNN/optimizer/BatchNorm-state boundaries, global step counts, and RNG states in CPU memory. The running-statistic EMA is part of the differentiable inner state; query gradients include the dependence on support-fitted statistics. Replay restores the statistics for each segment and leaves saved/reference statistics unchanged. Backward replays one segment at a time, carrying parameter and optimizer-state adjoints between segments and accumulating the support-feature gradient. Adam retains both moments and global bias correction; its square-root calculation uses a finite zero subgradient without changing forward update values. GPU activation memory depends on segment length; CPU checkpoint storage grows with trajectory length. The implementation computes the first outer gradient and does not support differentiating that outer gradient again.
 
-This branch (`meta-learning/neural-stft-frontend`) replaces the former hand-parameterized half-median frontend with a shared, gated spectral network. Fixed preprocessing still removes each window's mean, resamples 500 to 256 Hz, and computes unnormalized magnitude spectra using 256-point cosine windows, 128-point hops, and end zero-padding. The retained 1–40 Hz magnitude map has shape `(40, 223)` for a 112-second window. Only this fixed basis is cached, and phase is excluded. No dataset or task statistics are fitted before the frontend.
+This branch (`meta-learning/neural-stft-frontend`) replaces the former hand-parameterized half-median frontend with a generic convolution + MLP network. Fixed preprocessing still removes each window's mean, resamples 500 to 256 Hz, and computes unnormalized magnitude spectra using 256-point cosine windows, 128-point hops, and end zero-padding. The retained 1–40 Hz magnitude map has shape `(40, 223)` for a 112-second window. Only this fixed basis is cached, and phase is excluded. No dataset or task statistics are fitted before the frontend.
 
-The frontend maps STFT magnitudes to the native CNN input `(1, 1, 55, 40)` (55 time bins × 40 one-hertz frequency bins). The former `(55, 114)` grid and its bilinear frequency upsampling are removed:
+The frontend maps STFT magnitudes to the native CNN input `(1, 1, 56, 40)` (56 time bins × 40 one-hertz frequency bins):
 
 ```text
-STFT magnitude (40 frequencies × 223 frames), transposed to time × frequency
-(1) compression: per-frequency Box-Cox of (1 + magnitude) in log10 units,
-    exponent = 0.5·tanh(raw), raw = 0 → exactly log1p / ln(10)
-(2) normalization: per sample and frequency over time,
-    (x − a_f·mean_t) · std_t^(−b_f), gates a_f = b_f = 0 → identity (absolute amplitude kept)
-(4) FiLM: per-sample time mean/std of the compressed map → MLP(80→32→80, GELU)
-    → per-frequency scale/shift, x·(1 + γ_f) + β_f; zero head → identity
-(3) residual network: Conv2d(1→16, 3×3), seven pre-activation residual blocks
-    Conv2d(16→16, 3×3, time dilations 1,2,4,…,64; replicate padding),
-    Conv2d(16→1, 1×1) zero head added to the map; the receptive field spans all 223 frames
-(5) temporal aggregation: learnable linear 223 → 55 frame map,
-    reference adaptive-average-pooling matrix + learned delta (initially zero)
+STFT magnitude (40 frequencies × 223 frames)
+→ log1p / ln(10), transpose to time × frequency                    (fixed)
+→ Conv2d(1→16, 3×3) → GELU
+→ Conv2d(16→16, 3×3, time stride 2) → GELU                          (223 → 112 frames)
+→ Conv2d(16→16, 3×3, time stride 2) → GELU                          (112 → 56 bins)
+→ per time bin: LayerNorm(16·40) → Linear(640→64) → GELU → Linear(64→40, zero-initialized)
+→ add to the log-STFT map average-pooled to 56 × 40
 → task-local CNN
 ```
 
-All 34,034 frontend parameters are outer/meta parameters. At initialization every stage is the identity, so the frontend output equals the pure log-STFT representation up to floating-point rounding. The zero heads and zero gates receive gradients at the first outer step; FiLM's hidden layer and the convolution body receive gradients once the heads become nonzero (step 2). Normalization and FiLM use statistics of each sample only; the network has no BatchNorm or dropout, so a sample's features do not depend on batch companions. The linear time map can express average pooling, half-window means, differences, and trends; it does not compute medians or rank statistics. Every `eval_every` steps, history records `frontend` summaries of the compression exponents, normalization gates, and the norm of the aggregation delta. Frontend initialization follows the run seed without advancing caller CPU/CUDA RNG streams or changing the task CNN reference. It does not reproduce or load the historical median recipe or trained CNN checkpoints.
+All 49,704 frontend parameters are outer/meta parameters. The learned branch has no hand-designed stage: no parametric compression, normalization gates, FiLM statistics, or fixed aggregation matrix. LayerNorm keeps MLP inputs on a unit scale, so small weight changes are not multiplied by the large log-amplitude level; absolute amplitude remains available through the residual base path. Because the output layer starts at zero, the initial frontend equals the `log_stft` baseline exactly. Only that layer receives gradients at the first outer step; the convolution trunk and MLP hidden layer receive gradients once it is nonzero. All computation is per sample, with no BatchNorm or dropout, so features never depend on batch companions. Every `eval_every` steps, history records `frontend` weight norms. Frontend initialization follows the run seed without advancing caller CPU/CUDA RNG streams or changing the task CNN reference. It does not reproduce or load the historical median recipe or trained CNN checkpoints.
 
 The CNN backbone pads its first convolution by two time/frequency bins (`padding=(0, 2, 2)`) so the 40-bin frequency axis survives all pooling stages; its dense layer receives 64 × 2 × 1 features. This changes the CNN relative to earlier runs.
 
 Frontend computation uses non-reentrant activation checkpointing in chunks of 32 samples. This bounds retained convolution activations while preserving gradients through all support/query windows and the complete inner training trajectory. The pooled control and final per-mouse fitting use the same neural architecture. A neural frontend does not establish that the resulting bilevel objective is globally smooth or that query loss will decrease monotonically; the task CNN still uses ReLU/max-pooling and the inner optimizer retains its own dynamics. Use a new run directory; historical runs remain reproducible with their saved source snapshots.
 
-CNN BatchNorm uses normal training behavior: support minibatches supply batch statistics and update per-task running means/variances, while query/test inference uses eval mode with the support-fitted running statistics. Each fresh CNN resets its running statistics; fitted per-mouse statistics are saved with the checkpoint. The existing axis normalization retains its Keras-compatible settings (retention momentum 0.99, epsilon 0.001, biased variance). Pooled representation training updates its auxiliary CNN statistics normally, then discards that CNN before support-only per-mouse fitting. Inner gradient replay includes the complete running-statistic trajectory as well as CNN/optimizer state. `classifier_dropout` applies consistently to support, pooled, and final per-mouse CNN training and defaults to zero; query evaluation and inference always disable dropout. Query predictions therefore do not depend on unrelated query-batch companions or mutate shared normalization buffers. The backbone architecture retains its original dropout modules; training config controls their probability.
+CNN BatchNorm uses normal training behavior: support minibatches supply batch statistics and update per-task running means/variances, while query/test inference uses eval mode with support-fitted statistics. With `batchnorm_recalibration=true` (the default), every inner, per-mouse, and baseline fit ends with one training-mode pass over the complete support at zero retention, replacing the running EMA with the exact support mean/variance of the final weights. The EMA starts from (0, 1) and retains 0.99 per update, so after t updates it still holds 0.99^t of its initial value; for short fits (for example 49 updates per X2 epoch) this biased the first layer by several standard deviations. The recalibration pass is differentiable, so the hypergradient includes the dependence of these statistics on the frontend; it uses support data only. Reports record `calibrated_support_loss` and `calibrated_support_accuracy` next to the EMA-based per-epoch diagnostics. Each fresh CNN resets its running statistics; fitted per-mouse statistics are saved with the checkpoint. The existing axis normalization retains its Keras-compatible settings (retention momentum 0.99, epsilon 0.001, biased variance). Pooled representation training updates its auxiliary CNN statistics normally, then discards that CNN before support-only per-mouse fitting. Inner gradient replay includes the complete running-statistic trajectory as well as CNN/optimizer state. `classifier_dropout` applies consistently to support, pooled, and final per-mouse CNN training and defaults to zero; query evaluation and inference always disable dropout. Query predictions therefore do not depend on unrelated query-batch companions or mutate shared normalization buffers. The backbone architecture retains its original dropout modules; training config controls their probability.
 
 ## Setup and Docker commands
 
@@ -90,7 +85,7 @@ docker build -t seizure-prediction-cnn:pytorch .
 - `DATA_DIR=/data/users/jianchen/data/seizure_data`
 - `CACHE_DIR=/data/users/jianchen/data/seizure_data-cache/meta-learning`
 - `PREPARED_DIR=$CACHE_DIR/prepared`
-- `OUTPUT_DIR=$PWD/results/gated-frontend-meta`
+- `OUTPUT_DIR=$PWD/results/conv-mlp-frontend-meta`
 - `IMAGE_NAME=seizure-prediction-cnn:pytorch`
 - `TRAIN_CPU_THREADS=4`
 
@@ -107,7 +102,7 @@ This validates train-support/validation-query partition membership and writes on
 ### Train and compare
 
 ```bash
-OUTPUT_DIR="$PWD/results/gated-frontend-meta" ./run_meta.sh train --config configs/meta.json
+OUTPUT_DIR="$PWD/results/conv-mlp-frontend-meta" ./run_meta.sh train --config configs/meta.json
 OUTPUT_DIR="$PWD/results/neural-stft-train-val-bn-pooled" ./run_meta.sh train --config configs/meta.json --algorithm pooled
 ```
 
@@ -116,7 +111,7 @@ The pooled representation control uses the same frontend, CNN architecture, task
 Compare completed runs without launching additional training:
 
 ```bash
-python -m meta_learning.compare results/gated-frontend-meta results/neural-stft-train-val-bn-pooled --output results/comparison.json
+python -m meta_learning.compare results/conv-mlp-frontend-meta results/neural-stft-train-val-bn-pooled --output results/comparison.json
 ```
 
 The comparison rejects differences in configuration other than the algorithm, source versions, runtime, support/query samples, split roles, or query/test sample fingerprints. Query and test comparison metrics are reported separately. It also reports optimization/validation wall time and peak allocated GPU memory for each run.
@@ -126,8 +121,8 @@ The comparison rejects differences in configuration other than the algorithm, so
 ### Resume and query replay
 
 ```bash
-OUTPUT_DIR="$PWD/results/gated-frontend-meta" ./run_meta.sh train --config configs/meta.json --resume
-OUTPUT_DIR="$PWD/results/gated-frontend-meta" ./run_meta.sh validate
+OUTPUT_DIR="$PWD/results/conv-mlp-frontend-meta" ./run_meta.sh train --config configs/meta.json --resume
+OUTPUT_DIR="$PWD/results/conv-mlp-frontend-meta" ./run_meta.sh validate
 ```
 
 Resumption restores model, optimizer, task-sampler state, PyTorch CPU/CUDA RNG state, history, and selected checkpoint state. Configuration, source identities, code, and runtime must match. An initial step-zero checkpoint allows interruptions during the first long inner fit to resume. Work after the most recent completed outer checkpoint is replayed; partial inner trajectories are not resumed in place. A completed run with the same configuration exits without further optimization.
@@ -139,7 +134,7 @@ Query replay (`validate`) loads the selected adapted checkpoints and their saved
 Meta/pooled training scores test at evaluation intervals; the standalone baseline scores test after its single per-mouse fit. To replay the selected checkpoint:
 
 ```bash
-OUTPUT_DIR="$PWD/results/gated-frontend-meta" ./run_meta.sh test
+OUTPUT_DIR="$PWD/results/conv-mlp-frontend-meta" ./run_meta.sh test
 ```
 
 This loads the selected per-mouse checkpoints and identity scales, writes test predictions, and leaves model-selection records unchanged. The Python inference interface defaults to `--split test`; use `--split validation` to replay the query objective. Neither replay command trains a CNN or fits statistics.
@@ -147,8 +142,8 @@ This loads the selected per-mouse checkpoints and identity scales, writes test p
 ### Short integration check
 
 ```bash
-OUTPUT_DIR="$PWD/results/gated-frontend-meta-smoke" ./run_meta.sh train --config configs/smoke.json
-OUTPUT_DIR="$PWD/results/gated-frontend-meta-smoke" ./run_meta.sh validate
+OUTPUT_DIR="$PWD/results/conv-mlp-frontend-meta-smoke" ./run_meta.sh train --config configs/smoke.json
+OUTPUT_DIR="$PWD/results/conv-mlp-frontend-meta-smoke" ./run_meta.sh validate
 ```
 
 The smoke configuration uses X15, two outer steps, small per-class sample caps, and exactly two epochs for both inner and final per-mouse CNN fitting. It verifies execution rather than estimating convergence or model performance. Keep it separate from full-cohort comparisons. The pooled smoke control uses the same configuration plus `--algorithm pooled`.
@@ -159,8 +154,8 @@ Use an environment matching `requirements.txt`. Examples:
 
 ```bash
 python prepare.py --output prepared
-python train.py --prepared-dir prepared --cache-dir /path/to/cache --run-dir results/gated-frontend-meta --config configs/meta.json
-python evaluate.py --prepared-dir prepared --cache-dir /path/to/cache --run-dir results/gated-frontend-meta
+python train.py --prepared-dir prepared --cache-dir /path/to/cache --run-dir results/conv-mlp-frontend-meta --config configs/meta.json
+python evaluate.py --prepared-dir prepared --cache-dir /path/to/cache --run-dir results/conv-mlp-frontend-meta
 python -m unittest discover -s tests -v
 ```
 
@@ -180,7 +175,7 @@ Each run retains:
 
 Source preparation and finite-window quality audits establish identity, alignment, and the recorded audit findings. Inspect actual signal artifacts before attributing model behavior to physiology. Independent events and recording days, rather than overlapping window counts, determine the available evidence.
 
-Historical experiment records remain available locally and contain their original source snapshots. The earlier `results/meta` run optimized CNN initialization as well as the frontend and used a three-step inner loop; it does not measure this frontend-only epoch objective. Use a new output directory for the changed algorithm. Historical runs can be replayed with their saved source versions and cannot resume under this changed algorithm. The fixed train-support/validation-query/test-eval protocol requires a new output directory and cannot resume former rolling-within-train runs. Restoring training-mode BatchNorm also requires a fresh run; frozen-statistics checkpoints cannot resume under this code. The launcher now defaults to `results/gated-frontend-meta` to keep those runs separate. The former four-draw mouse-sampling schedule also requires a new output directory. Old `min_support_days`, `query_days`, `tasks_per_step`, `inner_steps`, `adaptation_steps`, `adaptation_lr`, `inner_min_epochs`, `inner_max_epochs`, `inner_patience`, and `inner_relative_tolerance` configuration fields are rejected; `inner_epochs` controls the fixed budget of both CNN fitting stages. Runs using the former early stopping policy require a new output directory.
+Historical experiment records remain available locally and contain their original source snapshots. The earlier `results/meta` run optimized CNN initialization as well as the frontend and used a three-step inner loop; it does not measure this frontend-only epoch objective. Use a new output directory for the changed algorithm. Historical runs can be replayed with their saved source versions and cannot resume under this changed algorithm. The fixed train-support/validation-query/test-eval protocol requires a new output directory and cannot resume former rolling-within-train runs. Restoring training-mode BatchNorm also requires a fresh run; frozen-statistics checkpoints cannot resume under this code. The launcher now defaults to `results/conv-mlp-frontend-meta` to keep those runs separate. The former four-draw mouse-sampling schedule also requires a new output directory. Old `min_support_days`, `query_days`, `tasks_per_step`, `inner_steps`, `adaptation_steps`, `adaptation_lr`, `inner_min_epochs`, `inner_max_epochs`, `inner_patience`, and `inner_relative_tolerance` configuration fields are rejected; `inner_epochs` controls the fixed budget of both CNN fitting stages. Runs using the former early stopping policy require a new output directory.
 
 ## Source layout
 
@@ -199,4 +194,4 @@ run_meta.sh        Docker launcher
 
 ## Method references
 
-The outer representation objective follows the bilevel learning formulation in [Franceschi et al. (ICML 2018)](https://proceedings.mlr.press/v80/franceschi18a.html). Unlike initialization-learning methods such as [MAML (ICML 2017)](https://proceedings.mlr.press/v70/finn17a.html), the only meta-parameters here are the frontend weights. The shared frontend is a gated network over a fixed STFT magnitude basis: learnable compression, sample-local normalization, FiLM, a dilated residual Conv2d/GELU network, and learnable temporal aggregation.
+The outer representation objective follows the bilevel learning formulation in [Franceschi et al. (ICML 2018)](https://proceedings.mlr.press/v80/franceschi18a.html). Unlike initialization-learning methods such as [MAML (ICML 2017)](https://proceedings.mlr.press/v70/finn17a.html), the only meta-parameters here are the frontend weights. The shared frontend is a convolution + MLP residual network over a fixed STFT magnitude basis.

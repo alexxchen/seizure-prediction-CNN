@@ -26,7 +26,7 @@ case "$action" in prepare|train|validate|test|check) ;; *) echo "Unknown action:
 data_dir="${DATA_DIR:-/data/users/jianchen/data/seizure_data}"
 cache_dir="${CACHE_DIR:-/data/users/jianchen/data/seizure_data-cache/meta-learning}"
 prepared_dir="${PREPARED_DIR:-$cache_dir/prepared}"
-output_dir="${OUTPUT_DIR:-$project_dir/results/gated-frontend-meta}"
+output_dir="${OUTPUT_DIR:-$project_dir/results/conv-mlp-frontend-meta}"
 image_name="${IMAGE_NAME:-seizure-prediction-cnn:pytorch}"
 device=auto
 dry_run=false
