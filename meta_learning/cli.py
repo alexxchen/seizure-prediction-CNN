@@ -48,13 +48,21 @@ def train_main():
             tables, _ = sample_pipeline.build_tables(store.dataset, mouse)
             splits = {part: FeatureSplit(mouse, part, None, table.label.to_numpy(), table)
                       for part, table in tables.items()}
-            tasks[mouse] = [dict(split_episode(splits["train"], splits["validation"]).describe(),
+            query = splits["validation"].subset_days(config.query_validation_days)
+            tasks[mouse] = [dict(split_episode(splits["train"], query).describe(),
+                                 selection_days=(None if config.selection_validation_days is None else
+                                                 list(config.selection_validation_days)),
                                  eval_split="test", eval_days=sorted(splits["test"].table.day.unique().tolist()),
                                  eval_samples=len(splits["test"].labels))]
         write_json(args.run_dir / "episodes.json", tasks)
         print(json.dumps(dict(training=False, episodes={mouse: len(rows) for mouse, rows in tasks.items()})))
         return
     result = train_run(config, store, args.run_dir, args.prepared_dir, resolve_device(args.device), args.resume)
+    # Plot only after a successful run, including a completed compatible resume.
+    from meta_learning.plotting import save_convergence_plots
+
+    paths = save_convergence_plots(args.run_dir)
+    print(json.dumps(dict(stage="convergence_plots", paths=[str(path) for path in paths])), flush=True)
     print(json.dumps(result), flush=True)
 
 

@@ -30,7 +30,7 @@ def compare_runs(first, second):
     if any(status["status"] != "complete" for status in statuses):
         raise ValueError("Compare completed runs")
     return dict(aggregate={algorithm: report["aggregate"] for algorithm, report in reports.items()},
-                aggregate_role="validation query (used for training and selection)",
+                aggregate_role=metadata[0]["selection_criterion"],
                 eval={algorithm: report["eval"]["aggregate"] for algorithm, report in reports.items()},
                 eval_meta_minus_pooled=reports["meta"]["eval"]["aggregate"]["accuracy"] - reports["pooled"]["eval"]["aggregate"]["accuracy"],
                 meta_minus_pooled=reports["meta"]["aggregate"]["accuracy"] - reports["pooled"]["aggregate"]["accuracy"],

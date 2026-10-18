@@ -25,6 +25,18 @@ class FeatureSplit:
         columns = ["mouse", "day", "raw_file", "start_row", "stop_row", "label"]
         return digest(self.table[columns].to_dict("records"))
 
+    def subset_days(self, days):
+        """Restrict to whole recording days, so overlapping windows never cross the boundary."""
+        mask = self.table.day.isin(days).to_numpy()
+        if mask.all():
+            return self
+        indices = np.flatnonzero(mask)
+        if not len(indices):
+            raise ValueError(f"{self.mouse}: no {self.split} windows on days {list(days)}")
+        spectrum = None if self.spectrum is None else np.asarray(self.spectrum[indices])
+        return FeatureSplit(self.mouse, self.split, spectrum, np.asarray(self.labels)[indices],
+                            self.table.iloc[indices].reset_index(drop=True))
+
     def scale(self, indices=None):
         # Preserve absolute spectral amplitude before the neural log transform.
         # Retain the saved-scale interface for personalization and inference.

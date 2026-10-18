@@ -5,7 +5,7 @@ import json
 import math
 from pathlib import Path
 
-from source_data import TARGETS
+from source_data import DAY_SPLITS, TARGETS
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,9 @@ class Config:
     inner_epsilon: float = 1e-8
     classifier_dropout: float = 0.0
     outer_lr: float = 5e-4
+    outer_weight_decay: float = 0.0
+    query_validation_days: tuple = (8, 11)
+    selection_validation_days: tuple | None = None
     support_per_class: int | None = None
     query_per_class: int | None = None
     eval_every: int = 100
@@ -53,6 +56,20 @@ class Config:
             raise ValueError("inner_checkpoint_steps must be a nonnegative integer")
         if type(self.inner_log_every) is not int or self.inner_log_every < 0:
             raise ValueError("inner_log_every must be a nonnegative integer (0 logs only the final epoch)")
+        validation_days = set(DAY_SPLITS["validation"])
+        query_days = self.query_validation_days
+        if (type(query_days) is not tuple or not query_days or len(set(query_days)) != len(query_days) or
+                any(type(day) is not int or day not in validation_days for day in query_days)):
+            raise ValueError("query_validation_days must be distinct validation days")
+        selection_days = self.selection_validation_days
+        if selection_days is not None and (
+                type(selection_days) is not tuple or not selection_days or
+                len(set(selection_days)) != len(selection_days) or set(selection_days) & set(query_days) or
+                any(type(day) is not int or day not in validation_days for day in selection_days)):
+            raise ValueError("selection_validation_days must be null or distinct validation days disjoint from the query days")
+        if (type(self.outer_weight_decay) not in {float, int} or not math.isfinite(self.outer_weight_decay)
+                or self.outer_weight_decay < 0):
+            raise ValueError("outer_weight_decay must be finite and nonnegative")
         if type(self.batchnorm_recalibration) is not bool:
             raise ValueError("batchnorm_recalibration must be true or false")
         if self.inner_shuffle_seed is not None and (
@@ -74,7 +91,9 @@ class Config:
         return self
 
     def to_dict(self):
-        return dict(asdict(self), targets=list(self.targets))
+        days = self.selection_validation_days
+        return dict(asdict(self), targets=list(self.targets), query_validation_days=list(self.query_validation_days),
+                    selection_validation_days=None if days is None else list(days))
 
     @classmethod
     def from_dict(cls, value):
@@ -82,8 +101,9 @@ class Config:
         if unknown:
             raise ValueError(f"Unknown configuration fields: {sorted(unknown)}")
         value = dict(value)
-        if "targets" in value:
-            value["targets"] = tuple(value["targets"])
+        for key in ["targets", "query_validation_days", "selection_validation_days"]:
+            if value.get(key) is not None:
+                value[key] = tuple(value[key])
         return cls(**value).validate()
 
     @classmethod
