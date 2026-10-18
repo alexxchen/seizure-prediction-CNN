@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from meta_learning.frontend import FRONTEND_CONFIG, SPECTRUM_CONFIG, LogSTFTFrontend
+from meta_learning.frontend import FILTERBANK_CONFIG, FRONTEND_CONFIG, LogSTFTFrontend
+from meta_learning.waveform import WAVEFORM_CONFIG
 from meta_learning.adaptation import adapt_model, predict
 from meta_learning.algorithms import meta_objective, pooled_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json
@@ -184,7 +185,7 @@ def log_stft_baseline(initial, store, config, device, run_dir, identity):
             records[mouse] = dict(path=str(path.relative_to(run_dir)), sha256=file_hash(path))
             save_predictions(path.parent, predictions[mouse], mouse_metrics(report, mouse))
         report.update(identity=identity, frontend_type="pure_log_stft", frontend_parameters=0,
-                      description="Fixed log1p STFT and adaptive average pooling to the native 56x40 grid; no learned stages; "
+                      description="Frozen cosine-window DFT filterbank log1p magnitude, average-pooled to the native 56x40 grid; no learned stages; "
                                   "fresh per-mouse CNN trained on Days 0-7; " +
                                   ", ".join(f"{role} Days {value['days']}" for role, value in report_roles(report).items()),
                       adapted_models=records, wall_seconds=time.monotonic() - started)
@@ -257,11 +258,11 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       selection_criterion=("Single fixed log-STFT fit; no checkpoint search"
                           if config.algorithm == "log_stft" else selection_criterion(config)),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
-                                       "on frontend weight matrices; frontend biases, LayerNorm, and any auxiliary CNN undecayed"),
+                                       "on frontend weight matrices except the filterbank; filterbank, biases, norms, and any auxiliary CNN undecayed"),
                       runtime=runtime_identity(device), sample_config=sample_pipeline.SAMPLE_CONFIG,
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),
-                      spectrum_config=SPECTRUM_CONFIG,
-                      frontend_config=(dict(architecture="pure_log_stft", input_transform="log1p_base10",
+                      waveform_config=WAVEFORM_CONFIG, filterbank_config=FILTERBANK_CONFIG,
+                      frontend_config=(dict(architecture="pure_log_stft", input_transform="frozen DFT filterbank, log1p_base10 magnitude",
                           temporal_pooling="adaptive_average", time_bins=FRONTEND_CONFIG["time_bins"],
                           frequency_bins=FRONTEND_CONFIG["input_frequency_bins"], parameters=0)
                           if config.algorithm == "log_stft" else FRONTEND_CONFIG),
@@ -323,8 +324,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
         return run_log_stft(model, store, config, device, run_dir, identity)
     model.cnn.requires_grad_(config.algorithm == "pooled")
     outer_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
-    # Decoupled weight decay applies only to frontend weight matrices (not biases/LayerNorm).
-    decayed = {id(parameter) for parameter in model.frontend.parameters() if parameter.ndim > 1}
+    # Decoupled weight decay applies only to frontend weight matrices (not the filterbank, biases, or norms).
+    decayed = {id(parameter) for parameter in model.frontend.decay_parameters()}
     groups = [dict(params=[p for p in outer_parameters if id(p) in decayed], weight_decay=config.outer_weight_decay),
               dict(params=[p for p in outer_parameters if id(p) not in decayed], weight_decay=0.0)]
     optimizer = torch.optim.AdamW([group for group in groups if group["params"]], lr=config.outer_lr)

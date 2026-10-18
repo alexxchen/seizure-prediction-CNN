@@ -3,7 +3,7 @@
 import torch
 from torch import nn
 
-from meta_learning.frontend import SpectralFrontend
+from meta_learning.frontend import WaveformFrontend
 from models.cnn import SeizureCNN
 
 CNN_INPUT_SHAPE = (1, 1, 56, 40)
@@ -12,7 +12,7 @@ CNN_INPUT_SHAPE = (1, 1, 56, 40)
 class MetaModel(nn.Module):
     def __init__(self, cnn_seed=None):
         super().__init__()
-        self.frontend = SpectralFrontend(seed=cnn_seed if cnn_seed is not None else 0)
+        self.frontend = WaveformFrontend(seed=cnn_seed if cnn_seed is not None else 0)
         self.cnn = SeizureCNN(CNN_INPUT_SHAPE)
         if cnn_seed is not None:
             self.reset_classifier(cnn_seed)

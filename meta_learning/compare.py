@@ -18,7 +18,7 @@ def compare_runs(first, second):
     if a != b or set(algorithms) != {"meta", "pooled"}:
         raise ValueError("Compare meta and pooled runs with matching remaining configuration")
     for key in ["training_fingerprints", "query_fingerprints", "split_roles", "selection_criterion", "source_inventory_sha256", "runtime", "sample_config",
-                "spectrum_config", "frontend_config", "source_sha256"]:
+                "waveform_config", "filterbank_config", "frontend_config", "source_sha256"]:
         if metadata[0][key] != metadata[1][key]:
             raise ValueError(f"Comparison mismatch: {key}")
     for mouse in a["targets"]:

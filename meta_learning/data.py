@@ -1,4 +1,4 @@
-"""Lazy split loading, source audits, and cached identity-scaled STFT magnitudes."""
+"""Lazy split loading, source audits, and cached centered/resampled waveforms."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from meta_learning.frontend import fixed_spectrum
+from meta_learning.waveform import cached_waveforms
 from meta_learning.common import digest, signal_audit, validate_sample_table, write_json
 from prepare import load_dataset
 import sample_pipeline
@@ -16,7 +16,7 @@ import sample_pipeline
 class FeatureSplit:
     mouse: str
     split: str
-    spectrum: np.ndarray
+    inputs: np.ndarray
     labels: np.ndarray
     table: object
 
@@ -33,8 +33,8 @@ class FeatureSplit:
         indices = np.flatnonzero(mask)
         if not len(indices):
             raise ValueError(f"{self.mouse}: no {self.split} windows on days {list(days)}")
-        spectrum = None if self.spectrum is None else np.asarray(self.spectrum[indices])
-        return FeatureSplit(self.mouse, self.split, spectrum, np.asarray(self.labels)[indices],
+        inputs = None if self.inputs is None else np.asarray(self.inputs[indices])
+        return FeatureSplit(self.mouse, self.split, inputs, np.asarray(self.labels)[indices],
                             self.table.iloc[indices].reset_index(drop=True))
 
     def scale(self, indices=None):
@@ -45,7 +45,7 @@ class FeatureSplit:
     def batch(self, indices, scale, device):
         if scale != 1.0:
             raise ValueError("The neural STFT frontend requires identity normalization")
-        values = np.array(self.spectrum[indices], dtype=np.float32, copy=True)
+        values = np.array(self.inputs[indices], dtype=np.float32, copy=True)
         labels = np.array(self.labels[indices], dtype=np.int64, copy=True)
         return torch.from_numpy(values).to(device), torch.from_numpy(labels).to(device)
 
@@ -81,8 +81,8 @@ class DataStore:
         raw, labels = sample_pipeline.materialize(self.dataset, mouse, split, table,
                                                   self.cache_dir / "samples")
         write_json(self.artifact_dir / mouse / f"{split}_signal_audit.json", signal_audit(raw))
-        spectrum = fixed_spectrum(raw, self.cache_dir / "spectra")
-        result = FeatureSplit(mouse, split, spectrum, labels, table)
+        waveforms = cached_waveforms(raw, self.cache_dir / "waveforms")
+        result = FeatureSplit(mouse, split, waveforms, labels, table)
         write_json(self.artifact_dir / mouse / f"{split}_provenance.json",
                    dict(fingerprint=result.fingerprint, samples=len(labels), days=sorted(table.day.unique().tolist())))
         table.to_csv(self.artifact_dir / mouse / f"{split}_samples.csv", index=False)

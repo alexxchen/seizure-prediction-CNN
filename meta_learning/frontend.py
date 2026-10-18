@@ -1,158 +1,144 @@
-"""A generic convolution + MLP frontend between fixed STFT and the task CNN.
+"""A convolutional waveform frontend between preprocessed LFP windows and the task CNN.
 
-Only centered/resampled STFT magnitudes are cached. A strided time-frequency
-convolution trunk and a per-time-bin MLP learn a residual correction to the
-average-pooled log-STFT map. The zero-initialized output layer makes step 0
-equal the log-STFT baseline.
+No spectrum is precomputed. A learnable 1-D convolution filterbank, initialized to
+cosine-windowed cosine/sine pairs, forms a log-magnitude time-frequency map inside
+the network. Two zero-initialized residual branches refine that map: a 2-D conv +
+MLP over the map and a strided 1-D conv stack over the raw waveform. At step 0 the
+output equals the log-STFT baseline, which uses the same filterbank frozen.
 """
 
-import hashlib
-import importlib.metadata
-import json
 import math
-from pathlib import Path
 
-import numpy as np
 import torch
-from scipy.fftpack import fft
-from scipy.signal import resample_poly
-from scipy.signal.windows import cosine
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
-from source_data import file_hash
-from meta_learning.common import write_json
+from meta_learning.waveform import WAVEFORM_CONFIG
 
 
-SPECTRUM_CONFIG = dict(source_hz=500, target_hz=256, frame_length=256,
-                       hop_length=128, frequency_hz=[1, 40], center=False,
-                       window="cosine_symmetric", end_padding="next_frame_multiple",
-                       representation="unnormalized_magnitude")
-FRONTEND_CONFIG = dict(architecture="conv_mlp_residual", input_frequency_bins=40,
-    input_frames=223, input_transform="log1p_base10",
-    conv="Conv2d 1->16 3x3, then two Conv2d 16->16 3x3 with time stride 2 (223->112->56 frames); GELU",
-    conv_channels=16, time_strides=[2, 2],
-    mlp="Per time bin: LayerNorm(16x40) -> Linear(640->64) -> GELU -> Linear(64->40), zero-initialized",
-    mlp_hidden=64, residual_base="adaptive average pooling of the log-STFT map to the output grid",
+FILTERBANK_CONFIG = dict(sample_hz=256, frame_length=256, hop_length=128, frequency_hz=[1, 40],
+    initialization="Cosine-window (scipy 'cosine', symmetric) cos/sin pairs: an unnormalized 256-point DFT",
+    magnitude="sqrt(real^2 + imag^2 + 1e-6)", compression="log1p / ln(10)", learnable=True)
+FRONTEND_CONFIG = dict(architecture="waveform_conv", input_samples=28672, input_frames=223,
+    input_frequency_bins=40,
+    filterbank="Conv1d 1->80 (40 cos + 40 sin), kernel 256, stride 128, no bias; excluded from weight decay",
+    map_branch="Conv2d 1->16 3x3, two Conv2d 16->16 3x3 with time stride 2 (223->56); per time bin "
+               "LayerNorm(640) -> Linear(640->64) -> GELU -> Linear(64->40), zero-initialized",
+    waveform_branch="Conv1d 1->32 k10 s4 + GroupNorm(1) -> 32 k8 s4 -> 64 k8 s4 -> 64 k4 s2 -> 64 k4 s4 "
+                    "(28672->56 samples, GELU); per bin LayerNorm(64) -> Linear(64->64) -> GELU -> "
+                    "Linear(64->40), zero-initialized",
+    residual_base="log-magnitude map average-pooled to the output grid",
     time_bins=56, frequency_bins=40, checkpoint_batch_size=32,
-    initialization="Seeded; zero output layer, so step 0 equals the log-STFT average-pooling map")
+    initialization="Seeded; exact log-STFT average-pooling map at step 0 (DFT filterbank, zero output layers)")
 
 
-def fixed_spectrum_batch(raw):
-    """Reproduce stft 0.5.2's selected magnitude basis using pinned SciPy only."""
-    values = np.asarray(raw, dtype=np.float32)
-    if values.ndim != 2 or not np.isfinite(values).all():
-        raise ValueError("Expected finite (windows, waveform_samples) inputs")
-    values = values - values.mean(axis=1, keepdims=True, dtype=np.float64).astype(np.float32)
-    values = resample_poly(values, 256, 500, axis=1)
-    length, hop = SPECTRUM_CONFIG["frame_length"], SPECTRUM_CONFIG["hop_length"]
-    values = np.pad(values, ((0, 0), (0, (-values.shape[1]) % length)))
-    frames = np.lib.stride_tricks.sliding_window_view(values, length, axis=1)[:, ::hop]
-    spectrum = fft(frames * cosine(length), axis=-1)[..., :length // 2 + 1]
-    frequencies = np.fft.rfftfreq(length, d=1 / SPECTRUM_CONFIG["target_hz"])
-    low, high = SPECTRUM_CONFIG["frequency_hz"]
-    magnitude = np.abs(spectrum[..., (frequencies >= low) & (frequencies <= high)])
-    return magnitude.transpose(0, 2, 1).astype(np.float32)
+def filterbank_reference():
+    """Windowed DFT rows for 1-40 Hz; magnitude equals |STFT| of the cosine-windowed frame."""
+    length, rate = FILTERBANK_CONFIG["frame_length"], FILTERBANK_CONFIG["sample_hz"]
+    low, high = FILTERBANK_CONFIG["frequency_hz"]
+    n = torch.arange(length, dtype=torch.float64)
+    window = torch.sin(math.pi * (n + 0.5) / length)
+    frequencies = torch.arange(low, high + 1, dtype=torch.float64) * length / rate
+    phase = 2 * math.pi * frequencies[:, None] * n[None] / length
+    weights = torch.cat([window * torch.cos(phase), -window * torch.sin(phase)])
+    return weights.unsqueeze(1).float()
 
 
-def fixed_spectrum(raw, cache):
-    """Cache the fixed basis; never cache outputs of trainable operations."""
-    raw_hash = file_hash(raw.filename) if hasattr(raw, "filename") else hashlib.sha256(raw.tobytes()).hexdigest()
-    identity = dict(raw_sha256=raw_hash, source_sha256=file_hash(__file__),
-                    config=SPECTRUM_CONFIG,
-                    runtime={name: importlib.metadata.version(name) for name in ["torch", "numpy", "scipy"]})
-    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    cache = Path(cache)
-    cache.mkdir(parents=True, exist_ok=True)
-    path = cache / f"{key}.npy"
-    manifest_path = cache / f"{key}.json"
-    if manifest_path.exists():
-        stored = json.loads(manifest_path.read_text())
-        if stored["identity"] != identity or file_hash(path) != stored["sha256"]:
-            raise ValueError("Fixed spectrum cache changed")
-        return np.load(path, mmap_mode="r", allow_pickle=False)
-    first = fixed_spectrum_batch(raw[:1])
-    temporary = path.with_suffix(".npy.tmp")
-    output = np.lib.format.open_memmap(temporary, mode="w+", dtype=np.float32,
-                                       shape=(len(raw), *first.shape[1:]))
-    for start in range(0, len(raw), 32):
-        values = fixed_spectrum_batch(raw[start:start + 32])
-        if not np.isfinite(values).all():
-            raise ValueError("Non-finite fixed spectrum")
-        output[start:start + len(values)] = values
-    output.flush()
-    del output
-    temporary.replace(path)
-    write_json(manifest_path, dict(identity=identity, sha256=file_hash(path)))
-    return np.load(path, mmap_mode="r", allow_pickle=False)
+def log_magnitude_map(waveform, filterbank):
+    """(N, samples) -> (N, 1, frames, frequencies) log10(1 + |filter response|)."""
+    response = F.conv1d(waveform.unsqueeze(1), filterbank, stride=FILTERBANK_CONFIG["hop_length"])
+    real, imag = response.chunk(2, dim=1)
+    magnitude = torch.sqrt(real.square() + imag.square() + 1e-6)
+    return (torch.log1p(magnitude) / math.log(10)).transpose(1, 2).unsqueeze(1)
+
+
+def cnn_grid(features):
+    pooled = F.adaptive_avg_pool2d(features, (FRONTEND_CONFIG["time_bins"], features.shape[-1]))
+    return pooled.unsqueeze(1)
+
+
+def check_waveform(waveform):
+    if waveform.ndim != 2 or waveform.shape[1] != FRONTEND_CONFIG["input_samples"]:
+        raise ValueError(f"Expected preprocessed waveforms shaped (N, {FRONTEND_CONFIG['input_samples']}) "
+                         f"at {WAVEFORM_CONFIG['target_hz']} Hz")
 
 
 class LogSTFTFrontend(nn.Module):
-    """Parameter-free log-STFT control on the same native CNN grid as the network."""
+    """Parameter-free control: the frozen DFT filterbank on the same native CNN grid."""
 
-    @staticmethod
-    def log_map(magnitude):
-        return (torch.log1p(magnitude) / math.log(10)).transpose(1, 2).unsqueeze(1)
+    def __init__(self):
+        super().__init__()
+        self.register_buffer("filterbank", filterbank_reference())
 
-    @staticmethod
-    def cnn_grid(features):
-        pooled = F.adaptive_avg_pool2d(features, (FRONTEND_CONFIG["time_bins"], features.shape[-1]))
-        return pooled.unsqueeze(1)
-
-    def forward(self, magnitude):
-        return self.cnn_grid(self.log_map(magnitude))
+    def forward(self, waveform):
+        check_waveform(waveform)
+        return cnn_grid(log_magnitude_map(waveform, self.filterbank))
 
 
-class SpectralFrontend(nn.Module):
-    """Strided conv trunk plus per-time-bin MLP, added to the pooled log-STFT map."""
+class WaveformFrontend(nn.Module):
+    """Learnable filterbank map plus zero-initialized map and raw-waveform conv residuals."""
 
     def __init__(self, seed=0):
         super().__init__()
-        c = FRONTEND_CONFIG
-        frequencies = torch.fft.rfftfreq(SPECTRUM_CONFIG["frame_length"], d=1 / 256)
-        self.register_buffer("frequencies", frequencies[(frequencies >= 1) & (frequencies <= 40)])
-        channels, bins = c["conv_channels"], c["input_frequency_bins"]
+        bins = FRONTEND_CONFIG["input_frequency_bins"]
+        reference = filterbank_reference()
+        self.register_buffer("filterbank_reference", reference.clone())
+        self.filterbank = nn.Parameter(reference)
         # Initialize CPU layers without advancing caller CPU/CUDA RNG streams,
         # keeping the reference task CNN unchanged when the frontend is replaced.
         with torch.random.fork_rng(devices=[]):
             generator = torch.Generator(device="cpu").manual_seed(seed)
             torch.set_rng_state(generator.get_state())
-            layers = [nn.Conv2d(1, channels, 3, padding=1), nn.GELU()]
-            for stride in c["time_strides"]:
-                layers += [nn.Conv2d(channels, channels, 3, stride=(stride, 1), padding=1), nn.GELU()]
-            self.conv = nn.Sequential(*layers)
-            self.mlp = nn.Sequential(nn.LayerNorm(channels * bins), nn.Linear(channels * bins, c["mlp_hidden"]),
-                                     nn.GELU(), nn.Linear(c["mlp_hidden"], bins))
-            # Zero output: the initial map is exactly the pooled log-STFT baseline.
-            nn.init.zeros_(self.mlp[-1].weight)
-            nn.init.zeros_(self.mlp[-1].bias)
+            self.map_conv = nn.Sequential(nn.Conv2d(1, 16, 3, padding=1), nn.GELU(),
+                                          nn.Conv2d(16, 16, 3, stride=(2, 1), padding=1), nn.GELU(),
+                                          nn.Conv2d(16, 16, 3, stride=(2, 1), padding=1), nn.GELU())
+            self.map_mlp = nn.Sequential(nn.LayerNorm(16 * bins), nn.Linear(16 * bins, 64), nn.GELU(),
+                                         nn.Linear(64, bins))
+            self.waveform_conv = nn.Sequential(
+                nn.Conv1d(1, 32, 10, stride=4, padding=3), nn.GroupNorm(1, 32), nn.GELU(),
+                nn.Conv1d(32, 32, 8, stride=4, padding=2), nn.GELU(),
+                nn.Conv1d(32, 64, 8, stride=4, padding=2), nn.GELU(),
+                nn.Conv1d(64, 64, 4, stride=2, padding=1), nn.GELU(),
+                nn.Conv1d(64, 64, 4, stride=4), nn.GELU())
+            self.waveform_mlp = nn.Sequential(nn.LayerNorm(64), nn.Linear(64, 64), nn.GELU(), nn.Linear(64, bins))
+            # Zero output layers: the initial map is exactly the pooled log-STFT baseline.
+            for layer in (self.map_mlp[-1], self.waveform_mlp[-1]):
+                nn.init.zeros_(layer.weight)
+                nn.init.zeros_(layer.bias)
+
+    def decay_parameters(self):
+        """Weight matrices that receive decoupled weight decay (not the filterbank, biases, or norms)."""
+        return [parameter for name, parameter in self.named_parameters()
+                if parameter.ndim > 1 and name != "filterbank"]
 
     def describe(self):
         with torch.no_grad():
             state = {name: float(parameter.norm()) for name, parameter in self.named_parameters()
                      if name.endswith("weight")}
-        return dict(FRONTEND_CONFIG, parameters=sum(parameter.numel() for parameter in self.parameters()),
-                    state=dict(weight_norms=state))
+            drift = float((self.filterbank - self.filterbank_reference).norm() / self.filterbank_reference.norm())
+        return dict(FRONTEND_CONFIG, filterbank_config=FILTERBANK_CONFIG,
+                    parameters=sum(parameter.numel() for parameter in self.parameters()),
+                    state=dict(weight_norms=state, filterbank_relative_drift=drift))
 
-    def _forward_batch(self, magnitude):
-        base = LogSTFTFrontend.log_map(magnitude)
-        hidden = self.conv(base)
-        if hidden.shape[2] != FRONTEND_CONFIG["time_bins"]:
+    def _forward_batch(self, waveform):
+        spectral = log_magnitude_map(waveform, self.filterbank)
+        hidden = self.map_conv(spectral)
+        waveform_hidden = self.waveform_conv(waveform.unsqueeze(1))
+        bins = FRONTEND_CONFIG["time_bins"]
+        if hidden.shape[2] != bins or waveform_hidden.shape[2] != bins:
             raise ValueError("Convolution strides do not produce the configured time bins")
-        # One token per output time bin: all channels and frequencies of that bin.
-        tokens = hidden.permute(0, 2, 1, 3).flatten(2)
-        residual = self.mlp(tokens).unsqueeze(1)
-        return (LogSTFTFrontend.cnn_grid(base).squeeze(1) + residual).unsqueeze(1)
+        # One token per output time bin from each branch.
+        map_residual = self.map_mlp(hidden.permute(0, 2, 1, 3).flatten(2))
+        waveform_residual = self.waveform_mlp(waveform_hidden.transpose(1, 2))
+        return (cnn_grid(spectral).squeeze(1) + (map_residual + waveform_residual).unsqueeze(1)).unsqueeze(1)
 
-    def forward(self, magnitude):
-        expected = (FRONTEND_CONFIG["input_frequency_bins"], FRONTEND_CONFIG["input_frames"])
-        if tuple(magnitude.shape[1:]) != expected:
-            raise ValueError(f"Expected STFT magnitudes shaped (N, {expected[0]}, {expected[1]})")
+    def forward(self, waveform):
+        check_waveform(waveform)
         outputs = []
         differentiable = torch.is_grad_enabled() and (
-            magnitude.requires_grad or any(parameter.requires_grad for parameter in self.parameters()))
-        for batch in magnitude.split(FRONTEND_CONFIG["checkpoint_batch_size"]):
+            waveform.requires_grad or any(parameter.requires_grad for parameter in self.parameters()))
+        for batch in waveform.split(FRONTEND_CONFIG["checkpoint_batch_size"]):
             # Non-reentrant checkpointing also supports autograd.grad and inputs
             # without requires_grad. It recomputes all neural activations exactly.
             outputs.append(checkpoint(self._forward_batch, batch, use_reentrant=False)
