@@ -1,10 +1,9 @@
-"""A convolutional waveform frontend between preprocessed LFP windows and the task CNN.
+"""A single, randomly initialized convolutional network from waveform to the task CNN.
 
-No spectrum is precomputed. A learnable 1-D convolution filterbank, initialized to
-cosine-windowed cosine/sine pairs, forms a log-magnitude time-frequency map inside
-the network. Two zero-initialized residual branches refine that map: a 2-D conv +
-MLP over the map and a strided 1-D conv stack over the raw waveform. At step 0 the
-output equals the log-STFT baseline, which uses the same filterbank frozen.
+No spectrum is precomputed and no stage is hand-designed: a pre-activation 1-D
+ResNet with strided downsampling maps each preprocessed waveform to a
+(channels, time) feature sequence for the 1-D task CNN. The parameter-free log-STFT control keeps
+a frozen cosine-window DFT filterbank on the same cached waveforms.
 """
 
 import math
@@ -20,17 +19,17 @@ from meta_learning.waveform import WAVEFORM_CONFIG
 FILTERBANK_CONFIG = dict(sample_hz=256, frame_length=256, hop_length=128, frequency_hz=[1, 40],
     initialization="Cosine-window (scipy 'cosine', symmetric) cos/sin pairs: an unnormalized 256-point DFT",
     magnitude="sqrt(real^2 + imag^2 + 1e-6)", compression="log1p / ln(10)", learnable=True)
-FRONTEND_CONFIG = dict(architecture="waveform_conv", input_samples=28672, input_frames=223,
-    input_frequency_bins=40,
-    filterbank="Conv1d 1->80 (40 cos + 40 sin), kernel 256, stride 128, no bias; excluded from weight decay",
-    map_branch="Conv2d 1->16 3x3, two Conv2d 16->16 3x3 with time stride 2 (223->56); per time bin "
-               "LayerNorm(640) -> Linear(640->64) -> GELU -> Linear(64->40), zero-initialized",
-    waveform_branch="Conv1d 1->32 k10 s4 + GroupNorm(1) -> 32 k8 s4 -> 64 k8 s4 -> 64 k4 s2 -> 64 k4 s4 "
-                    "(28672->56 samples, GELU); per bin LayerNorm(64) -> Linear(64->64) -> GELU -> "
-                    "Linear(64->40), zero-initialized",
-    residual_base="log-magnitude map average-pooled to the output grid",
-    time_bins=56, frequency_bins=40, checkpoint_batch_size=32,
-    initialization="Seeded; exact log-STFT average-pooling map at step 0 (DFT filterbank, zero output layers)")
+FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672, input_scale=0.01,
+    input_scale_note="Fixed unit conversion (microvolts x 0.01); not fitted to data",
+    stem="Conv1d(1->16, k8, s4)", stages=[[16, 4], [32, 4], [48, 4], [64, 2], [64, 1]], norm_groups=8,
+    stage_note="Each [channels, stride]: one residual block at that width, then a strided Conv1d to the next "
+               "width (28672 -> 7168 -> 1792 -> 448 -> 112 -> 56); the last stage adds a dilation-2 block",
+    block="Pre-activation: GroupNorm(8) -> GELU -> Conv1d k3 (dilation d) -> GroupNorm(8) -> GELU -> Conv1d k3 "
+          "(zero-initialized), added to the residual stream",
+    head="GroupNorm(8) -> GELU -> Conv1d(64 -> output_channels, k1); output is a (channels, time) sequence",
+    output_channels=64, time_bins=56, checkpoint_batch_size=32,
+    initialization="Seeded PyTorch defaults (random); zero-initialized last conv in each residual block; "
+                   "no alignment with log-STFT")
 
 
 def filterbank_reference():
@@ -45,17 +44,12 @@ def filterbank_reference():
     return weights.unsqueeze(1).float()
 
 
-def log_magnitude_map(waveform, filterbank):
-    """(N, samples) -> (N, 1, frames, frequencies) log10(1 + |filter response|)."""
+def log_magnitude_sequence(waveform, filterbank):
+    """(N, samples) -> (N, frequencies, frames) log10(1 + |filter response|)."""
     response = F.conv1d(waveform.unsqueeze(1), filterbank, stride=FILTERBANK_CONFIG["hop_length"])
     real, imag = response.chunk(2, dim=1)
     magnitude = torch.sqrt(real.square() + imag.square() + 1e-6)
-    return (torch.log1p(magnitude) / math.log(10)).transpose(1, 2).unsqueeze(1)
-
-
-def cnn_grid(features):
-    pooled = F.adaptive_avg_pool2d(features, (FRONTEND_CONFIG["time_bins"], features.shape[-1]))
-    return pooled.unsqueeze(1)
+    return torch.log1p(magnitude) / math.log(10)
 
 
 def check_waveform(waveform):
@@ -65,7 +59,9 @@ def check_waveform(waveform):
 
 
 class LogSTFTFrontend(nn.Module):
-    """Parameter-free control: the frozen DFT filterbank on the same native CNN grid."""
+    """Parameter-free control: 40 frozen DFT log-magnitude bands as channels, average-pooled to 56 bins."""
+
+    output_shape = (40, FRONTEND_CONFIG["time_bins"])
 
     def __init__(self):
         super().__init__()
@@ -73,65 +69,67 @@ class LogSTFTFrontend(nn.Module):
 
     def forward(self, waveform):
         check_waveform(waveform)
-        return cnn_grid(log_magnitude_map(waveform, self.filterbank))
+        return F.adaptive_avg_pool1d(log_magnitude_sequence(waveform, self.filterbank), FRONTEND_CONFIG["time_bins"])
+
+
+class ResidualBlock1d(nn.Module):
+    """Pre-activation residual block; the zero-initialized last conv starts it as the identity."""
+
+    def __init__(self, channels, dilation=1):
+        super().__init__()
+        groups = FRONTEND_CONFIG["norm_groups"]
+        self.branch = nn.Sequential(nn.GroupNorm(groups, channels), nn.GELU(),
+                                    nn.Conv1d(channels, channels, 3, padding=dilation, dilation=dilation),
+                                    nn.GroupNorm(groups, channels), nn.GELU(),
+                                    nn.Conv1d(channels, channels, 3, padding=1))
+        nn.init.zeros_(self.branch[-1].weight)
+        nn.init.zeros_(self.branch[-1].bias)
+
+    def forward(self, values):
+        return values + self.branch(values)
 
 
 class WaveformFrontend(nn.Module):
-    """Learnable filterbank map plus zero-initialized map and raw-waveform conv residuals."""
+    """One generic 1-D ResNet from waveform to a (channels, time) feature sequence."""
+
+    output_shape = (FRONTEND_CONFIG["output_channels"], FRONTEND_CONFIG["time_bins"])
 
     def __init__(self, seed=0):
         super().__init__()
-        bins = FRONTEND_CONFIG["input_frequency_bins"]
-        reference = filterbank_reference()
-        self.register_buffer("filterbank_reference", reference.clone())
-        self.filterbank = nn.Parameter(reference)
+        c = FRONTEND_CONFIG
         # Initialize CPU layers without advancing caller CPU/CUDA RNG streams,
         # keeping the reference task CNN unchanged when the frontend is replaced.
         with torch.random.fork_rng(devices=[]):
             generator = torch.Generator(device="cpu").manual_seed(seed)
             torch.set_rng_state(generator.get_state())
-            self.map_conv = nn.Sequential(nn.Conv2d(1, 16, 3, padding=1), nn.GELU(),
-                                          nn.Conv2d(16, 16, 3, stride=(2, 1), padding=1), nn.GELU(),
-                                          nn.Conv2d(16, 16, 3, stride=(2, 1), padding=1), nn.GELU())
-            self.map_mlp = nn.Sequential(nn.LayerNorm(16 * bins), nn.Linear(16 * bins, 64), nn.GELU(),
-                                         nn.Linear(64, bins))
-            self.waveform_conv = nn.Sequential(
-                nn.Conv1d(1, 32, 10, stride=4, padding=3), nn.GroupNorm(1, 32), nn.GELU(),
-                nn.Conv1d(32, 32, 8, stride=4, padding=2), nn.GELU(),
-                nn.Conv1d(32, 64, 8, stride=4, padding=2), nn.GELU(),
-                nn.Conv1d(64, 64, 4, stride=2, padding=1), nn.GELU(),
-                nn.Conv1d(64, 64, 4, stride=4), nn.GELU())
-            self.waveform_mlp = nn.Sequential(nn.LayerNorm(64), nn.Linear(64, 64), nn.GELU(), nn.Linear(64, bins))
-            # Zero output layers: the initial map is exactly the pooled log-STFT baseline.
-            for layer in (self.map_mlp[-1], self.waveform_mlp[-1]):
-                nn.init.zeros_(layer.weight)
-                nn.init.zeros_(layer.bias)
+            layers = [nn.Conv1d(1, c["stages"][0][0], 8, stride=4, padding=2)]
+            for index, (channels, stride) in enumerate(c["stages"]):
+                layers.append(ResidualBlock1d(channels))
+                if index + 1 < len(c["stages"]):
+                    layers.append(nn.Conv1d(channels, c["stages"][index + 1][0], stride, stride=stride))
+            layers.append(ResidualBlock1d(c["stages"][-1][0], dilation=2))
+            self.body = nn.Sequential(*layers)
+            width = c["stages"][-1][0]
+            self.head = nn.Sequential(nn.GroupNorm(c["norm_groups"], width), nn.GELU(),
+                                      nn.Conv1d(width, c["output_channels"], 1))
 
     def decay_parameters(self):
-        """Weight matrices that receive decoupled weight decay (not the filterbank, biases, or norms)."""
-        return [parameter for name, parameter in self.named_parameters()
-                if parameter.ndim > 1 and name != "filterbank"]
+        """Weight matrices that receive decoupled weight decay (not biases or norms)."""
+        return [parameter for parameter in self.parameters() if parameter.ndim > 1]
 
     def describe(self):
         with torch.no_grad():
             state = {name: float(parameter.norm()) for name, parameter in self.named_parameters()
-                     if name.endswith("weight")}
-            drift = float((self.filterbank - self.filterbank_reference).norm() / self.filterbank_reference.norm())
-        return dict(FRONTEND_CONFIG, filterbank_config=FILTERBANK_CONFIG,
-                    parameters=sum(parameter.numel() for parameter in self.parameters()),
-                    state=dict(weight_norms=state, filterbank_relative_drift=drift))
+                     if name.endswith("weight") and parameter.ndim > 1}
+        return dict(FRONTEND_CONFIG, parameters=sum(parameter.numel() for parameter in self.parameters()),
+                    state=dict(weight_norms=state))
 
     def _forward_batch(self, waveform):
-        spectral = log_magnitude_map(waveform, self.filterbank)
-        hidden = self.map_conv(spectral)
-        waveform_hidden = self.waveform_conv(waveform.unsqueeze(1))
-        bins = FRONTEND_CONFIG["time_bins"]
-        if hidden.shape[2] != bins or waveform_hidden.shape[2] != bins:
+        c = FRONTEND_CONFIG
+        features = self.head(self.body(waveform.unsqueeze(1) * c["input_scale"]))
+        if features.shape[2] != c["time_bins"]:
             raise ValueError("Convolution strides do not produce the configured time bins")
-        # One token per output time bin from each branch.
-        map_residual = self.map_mlp(hidden.permute(0, 2, 1, 3).flatten(2))
-        waveform_residual = self.waveform_mlp(waveform_hidden.transpose(1, 2))
-        return (cnn_grid(spectral).squeeze(1) + (map_residual + waveform_residual).unsqueeze(1)).unsqueeze(1)
+        return features
 
     def forward(self, waveform):
         check_waveform(waveform)
@@ -140,7 +138,7 @@ class WaveformFrontend(nn.Module):
             waveform.requires_grad or any(parameter.requires_grad for parameter in self.parameters()))
         for batch in waveform.split(FRONTEND_CONFIG["checkpoint_batch_size"]):
             # Non-reentrant checkpointing also supports autograd.grad and inputs
-            # without requires_grad. It recomputes all neural activations exactly.
+            # without requires_grad. It recomputes all activations exactly.
             outputs.append(checkpoint(self._forward_batch, batch, use_reentrant=False)
                            if differentiable else self._forward_batch(batch))
         return torch.cat(outputs)

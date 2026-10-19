@@ -28,6 +28,10 @@ class Config:
     classifier_dropout: float = 0.0
     outer_lr: float = 5e-4
     outer_weight_decay: float = 0.0
+    augment_random_crop: bool = False
+    random_crop_scope: str = "both"
+    query_crops: int = 1
+    support_crops: int = 1
     query_validation_days: tuple = (8, 11)
     selection_validation_days: tuple | None = None
     support_per_class: int | None = None
@@ -70,6 +74,18 @@ class Config:
         if (type(self.outer_weight_decay) not in {float, int} or not math.isfinite(self.outer_weight_decay)
                 or self.outer_weight_decay < 0):
             raise ValueError("outer_weight_decay must be finite and nonnegative")
+        if type(self.augment_random_crop) is not bool:
+            raise ValueError("augment_random_crop must be true or false")
+        if self.random_crop_scope not in {"both", "query", "support"}:
+            raise ValueError("random_crop_scope must be both, query, or support")
+        if type(self.query_crops) is not int or self.query_crops < 1:
+            raise ValueError("query_crops must be a positive integer")
+        if self.query_crops > 1 and not (self.augment_random_crop and self.random_crop_scope in {"both", "query"}):
+            raise ValueError("query_crops > 1 requires random crops on the query")
+        if type(self.support_crops) is not int or self.support_crops < 1:
+            raise ValueError("support_crops must be a positive integer")
+        if self.support_crops > 1 and not (self.augment_random_crop and self.random_crop_scope in {"both", "support"}):
+            raise ValueError("support_crops > 1 requires random crops on the support")
         if type(self.batchnorm_recalibration) is not bool:
             raise ValueError("batchnorm_recalibration must be true or false")
         if self.inner_shuffle_seed is not None and (

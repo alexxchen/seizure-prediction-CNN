@@ -5,6 +5,7 @@ import copy
 import numpy as np
 import torch
 
+from meta_learning.episodes import crops_support, support_inputs
 from meta_learning.inner import fit_classifier
 
 
@@ -18,19 +19,22 @@ def adapt_model(initial, training, config, device, seed, *, return_diagnostics=F
     model.frontend.requires_grad_(False)
     model.cnn.requires_grad_(True)
     scale = training.scale()
-    # Validation checkpointing cannot change subsequent meta-training RNG draws.
+    # Validation checkpointing cannot change subsequent meta-training RNG draws. The support
+    # policy (fixed windows, or K seeded random crops per window) is shared with meta inner fits.
     with torch.random.fork_rng():
         torch.manual_seed(seed)
+        rng = np.random.default_rng(seed)
         features, labels = [], []
         with torch.no_grad():
             for start in range(0, len(training.labels), config.batch_size):
-                indices = list(range(start, min(start + config.batch_size, len(training.labels))))
-                inputs, targets = training.batch(indices, scale, device)
+                indices = np.arange(start, min(start + config.batch_size, len(training.labels)))
+                inputs, targets = support_inputs(training, indices, config, rng, device)
                 features.append(model.frontend(inputs))
                 labels.append(targets)
         fit = fit_classifier(model.cnn, torch.cat(features), torch.cat(labels), config,
                              differentiable=False, progress=progress)
         model.cnn.load_state_dict(dict(fit.parameters, **fit.buffers))
+        fit.report.update(support_crops=config.support_crops if crops_support(config) else 0)
     result = model.eval(), scale
     return (*result, fit.report) if return_diagnostics else result
 

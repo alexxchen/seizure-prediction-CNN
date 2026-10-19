@@ -67,7 +67,8 @@ def selected_events(dataset, target):
     return pd.DataFrame(records).sort_values(["mouse", "day", "start_row", "raw_file"]).reset_index(drop=True)
 
 
-def negative_pool(dataset, target, window_rows):
+def safe_regions(dataset, target):
+    """Per recording, row ranges outside every seizure margin and positive interval."""
     c = SAMPLE_CONFIG
     events = dataset.events[dataset.events.mouse == target]
     before = int(round(c["negative_preictal_minutes"] * 60_000))
@@ -85,8 +86,7 @@ def negative_pool(dataset, target, window_rows):
     scope = c["negative_recording_scope"]
     if scope not in {"annotated_only", "all_recordings"}:
         raise ValueError("Unknown negative recording scope")
-    stride_rows = int(round(c["stride_seconds"] * SOURCE_HZ))
-    records = []
+    regions = {}
     for filename, source in sorted(dataset.sources.items()):
         if source["mouse"] != target or (scope == "annotated_only" and filename not in annotated):
             continue
@@ -103,11 +103,50 @@ def negative_pool(dataset, target, window_rows):
             cursor = max(cursor, right)
         if cursor < source["rows"]:
             safe.append((cursor, source["rows"]))
+        regions[filename] = safe
+    return regions
+
+
+def negative_pool(dataset, target, window_rows):
+    stride_rows = int(round(SAMPLE_CONFIG["stride_seconds"] * SOURCE_HZ))
+    records = []
+    for filename, safe in safe_regions(dataset, target).items():
+        source = dataset.sources[filename]
         for left, right in safe:
             for start in range(left, right - window_rows + 1, stride_rows):
                 records.append(dict(mouse=target, day=source["day"], raw_file=filename,
                                     start_row=start, stop_row=start + window_rows))
     return pd.DataFrame(records, columns=["mouse", "day", "raw_file", "start_row", "stop_row"])
+
+
+# Training-time random crops: alternative real windows with the same label definition.
+CROP_CONFIG = dict(positive="Any 112 s window inside the event's 7-3 minute positive interval (128 s of start positions)",
+                   negative="Window start within +/-negative_jitter_seconds of the fixed negative, inside its safe region",
+                   negative_jitter_seconds=64)
+
+
+def crop_ranges(dataset, target, rows):
+    """Inclusive (first, last) source start rows that keep each row's label definition."""
+    window_rows, offsets = sample_offsets()
+    span = int(round((SAMPLE_CONFIG["positive_earlier_minutes"] - SAMPLE_CONFIG["positive_later_minutes"]) * 60 * SOURCE_HZ))
+    jitter = int(round(CROP_CONFIG["negative_jitter_seconds"] * SOURCE_HZ))
+    regions = safe_regions(dataset, target)
+    ranges = []
+    for row in rows.itertuples():
+        if row.label == 1:
+            first = int(row.start_row - offsets[int(row.window)])
+            last = first + span - window_rows
+        else:
+            region = [(left, right) for left, right in regions.get(row.raw_file, [])
+                      if left <= row.start_row and row.stop_row <= right]
+            if len(region) != 1:
+                raise ValueError("Negative window is not inside exactly one safe region")
+            left, right = region[0]
+            first, last = max(left, int(row.start_row) - jitter), min(right - window_rows, int(row.start_row) + jitter)
+        if not first <= row.start_row <= last or first < 0 or last + window_rows > dataset.sources[row.raw_file]["rows"]:
+            raise ValueError("Crop range must contain the fixed window and stay inside the recording")
+        ranges.append((first, last))
+    return np.asarray(ranges, dtype=np.int64).reshape(-1, 2)
 
 
 def build_tables(dataset, target):

@@ -12,14 +12,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from meta_learning.frontend import FILTERBANK_CONFIG, FRONTEND_CONFIG, LogSTFTFrontend
+from meta_learning.frontend import FILTERBANK_CONFIG, FRONTEND_CONFIG, LogSTFTFrontend, WaveformFrontend
 from meta_learning.waveform import WAVEFORM_CONFIG
 from meta_learning.adaptation import adapt_model, predict
 from meta_learning.algorithms import meta_objective, pooled_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json
 from meta_learning.config import Config
-from meta_learning.episodes import split_episode, episode_batch
-from meta_learning.model import CNN_INPUT_SHAPE, MetaModel
+from meta_learning.episodes import crops_support, split_episode, episode_batch
+from meta_learning.model import MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
 import sample_pipeline
@@ -103,7 +103,8 @@ def validate(initial, store, config, device, step, run_dir, identity, *, fit_sta
     subjects = {role: {} for role, _, _ in roles}
     predictions, adapted = {}, {}
     for position, mouse in enumerate(config.targets):
-        training = store.load(mouse, "train")
+        # Per-mouse fits share the meta inner fits' support policy, including support crops.
+        training = store.load_crops(mouse, "train") if crops_support(config) else store.load(mouse, "train")
         model, scale, fit = adapt_model(initial, training, config, device, config.seed + 10000 + position,
                                         return_diagnostics=True,
                                         progress=fit_progress(fit_stage, step=step, mouse=mouse))
@@ -171,7 +172,7 @@ def log_stft_baseline(initial, store, config, device, run_dir, identity):
         reused = True
     else:
         baseline = copy.deepcopy(initial)
-        baseline.frontend = LogSTFTFrontend().to(device)
+        baseline.use_frontend(LogSTFTFrontend().to(device), config.seed)
         started = time.monotonic()
         # Per-mouse fitting is reproducible and does not change caller RNG state.
         with torch.random.fork_rng():
@@ -185,7 +186,7 @@ def log_stft_baseline(initial, store, config, device, run_dir, identity):
             records[mouse] = dict(path=str(path.relative_to(run_dir)), sha256=file_hash(path))
             save_predictions(path.parent, predictions[mouse], mouse_metrics(report, mouse))
         report.update(identity=identity, frontend_type="pure_log_stft", frontend_parameters=0,
-                      description="Frozen cosine-window DFT filterbank log1p magnitude, average-pooled to the native 56x40 grid; no learned stages; "
+                      description="Frozen cosine-window DFT filterbank log1p magnitude, average-pooled to 40 band channels x 56 time bins for the 1-D CNN; no learned stages; "
                                   "fresh per-mouse CNN trained on Days 0-7; " +
                                   ", ".join(f"{role} Days {value['days']}" for role, value in report_roles(report).items()),
                       adapted_models=records, wall_seconds=time.monotonic() - started)
@@ -241,9 +242,10 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
         if (previous["config"] != config.to_dict() or previous["source_sha256"] != source_hashes() or
                 previous["runtime"] != runtime_identity(device)):
             raise ValueError("Resume requires identical config, sources, and runtime")
-    training = {mouse: store.load(mouse, "train") for mouse in config.targets}
+    load = store.load_crops if config.augment_random_crop and config.algorithm != "log_stft" else store.load
+    training = {mouse: load(mouse, "train") for mouse in config.targets}
     # Only the configured query days supply outer gradients; selection days stay held out.
-    queries = {mouse: store.load(mouse, "validation").subset_days(config.query_validation_days)
+    queries = {mouse: load(mouse, "validation").subset_days(config.query_validation_days)
                for mouse in config.targets}
     episodes = {mouse: split_episode(training[mouse], queries[mouse]) for mouse in config.targets}
     provenance = dict(config=config.to_dict(), source_sha256=source_hashes(),
@@ -258,16 +260,17 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       selection_criterion=("Single fixed log-STFT fit; no checkpoint search"
                           if config.algorithm == "log_stft" else selection_criterion(config)),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
-                                       "on frontend weight matrices except the filterbank; filterbank, biases, norms, and any auxiliary CNN undecayed"),
+                                       "on frontend weight matrices; frontend biases, GroupNorm, and any auxiliary CNN undecayed"),
                       runtime=runtime_identity(device), sample_config=sample_pipeline.SAMPLE_CONFIG,
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),
                       waveform_config=WAVEFORM_CONFIG, filterbank_config=FILTERBANK_CONFIG,
                       frontend_config=(dict(architecture="pure_log_stft", input_transform="frozen DFT filterbank, log1p_base10 magnitude",
-                          temporal_pooling="adaptive_average", time_bins=FRONTEND_CONFIG["time_bins"],
-                          frequency_bins=FRONTEND_CONFIG["input_frequency_bins"], parameters=0)
+                          temporal_pooling="adaptive_average", time_bins=LogSTFTFrontend.output_shape[1],
+                          frequency_bins=LogSTFTFrontend.output_shape[0], parameters=0)
                           if config.algorithm == "log_stft" else FRONTEND_CONFIG),
                       baseline_policy="Standalone algorithm=log_stft only; no automatic startup baseline",
-                      day_splits=DAY_SPLITS, cnn_input_shape=list(CNN_INPUT_SHAPE),
+                      day_splits=DAY_SPLITS, cnn_input_shape=list((LogSTFTFrontend if config.algorithm == "log_stft" else WaveformFrontend).output_shape),
+                      cnn="1-D CNN: three Conv1d/AxisBatchNorm/max-pool stages (16, 32, 64), flatten, dense 128, 2 logits",
                       task_schedule=dict(mice=("Every configured mouse fitted once; no outer loop"
                                              if config.algorithm == "log_stft" else
                                              "Every configured mouse exactly once per outer step"),
@@ -278,11 +281,23 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       batchnorm=("Support batch statistics during training; query/test use exact support statistics of the final "
                                  "weights, recalibrated differentiably after each fit" if config.batchnorm_recalibration else
                                  "Support batch statistics and per-task running EMA; query/test use frozen support EMA; full EMA hypergradient"),
+                      augmentation=(dict(crop_config=sample_pipeline.CROP_CONFIG,
+                                         scope=config.random_crop_scope, query_crops=config.query_crops,
+                                         support_crops=config.support_crops,
+                                         policy="Meta/pooled training batches only (support, query, or both per scope): "
+                                                "fresh uniformly placed 112 s crops of each row's context segment every "
+                                                "outer step from the episode RNG; query_crops independent crops per query "
+                                                "window, loss averaged; fixed windows for per-mouse fitting, selection, and eval")
+                                    if config.augment_random_crop else "None"),
                       inner_shuffles=("Fresh window order and minibatch shuffles every outer step"
                                       if config.inner_shuffle_seed is None else
                                       f"Fixed per task: seed {config.inner_shuffle_seed} + task index; "
                                       "identical window order and minibatch shuffles every outer step"),
-                      inner_updates=(f"Task-local CNN {config.inner_optimizer}; exactly {config.inner_epochs} full epochs"
+                      inner_updates=(f"Task-local CNN {config.inner_optimizer}; exactly {config.inner_epochs} full epochs "
+                                     + (f"over {config.support_crops} random crops per support window (meta inner fits "
+                                        "from the episode RNG; per-mouse fits from a fixed per-mouse seed)"
+                                        if crops_support(config) else "over fixed support windows")
+                                     + " in both meta inner and per-mouse fits"
                                      if config.algorithm in {"meta", "log_stft"} else "None"),
                       outer_updates={"meta": "Shared frontend only",
                                      "pooled": "Frontend and auxiliary CNN; CNN discarded before per-mouse fitting",
@@ -324,7 +339,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
         return run_log_stft(model, store, config, device, run_dir, identity)
     model.cnn.requires_grad_(config.algorithm == "pooled")
     outer_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
-    # Decoupled weight decay applies only to frontend weight matrices (not the filterbank, biases, or norms).
+    # Decoupled weight decay applies only to frontend weight matrices (not biases or norms).
     decayed = {id(parameter) for parameter in model.frontend.decay_parameters()}
     groups = [dict(params=[p for p in outer_parameters if id(p) in decayed], weight_decay=config.outer_weight_decay),
               dict(params=[p for p in outer_parameters if id(p) not in decayed], weight_decay=0.0)]
@@ -403,7 +418,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 row["query"] = dict(split="validation", role="query", timing="before_outer_update",
                                     aggregate=aggregate, subjects=subjects)
                 fit_progress("query_step", step=step)(row["query"])
-                row["inner"] = dict(epochs_per_task=config.inner_epochs,
+                row["inner"] = dict(epochs_per_task=config.inner_epochs, support_crops=config.support_crops,
                                     mean_epochs=float(np.mean([fit["epochs_run"] for fit in inner_reports])),
                                     mean_selected_epoch=float(np.mean([fit["selected_epoch"] for fit in inner_reports])),
                                     optimizer_steps=sum(fit["optimizer_steps"] for fit in inner_reports),
@@ -482,7 +497,7 @@ def evaluate_run(store, run_dir, device, split="test"):
             raise ValueError("Selected checkpoint identity mismatch")
         model = MetaModel().to(device)
         if config.algorithm == "log_stft":
-            model.frontend = LogSTFTFrontend().to(device)
+            model.use_frontend(LogSTFTFrontend().to(device), config.seed)
         model.load_state_dict(state["model"])
         values = store.load(mouse, split)
         if values.fingerprint != state[f"{split}_fingerprint"]:

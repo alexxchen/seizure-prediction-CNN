@@ -1,11 +1,12 @@
 """Lazy split loading, source audits, and cached centered/resampled waveforms."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 import torch
 
+from meta_learning.crops import crop_segments, random_crops
 from meta_learning.waveform import cached_waveforms
 from meta_learning.common import digest, signal_audit, validate_sample_table, write_json
 from prepare import load_dataset
@@ -19,6 +20,8 @@ class FeatureSplit:
     inputs: np.ndarray
     labels: np.ndarray
     table: object
+    crop_segments: np.ndarray = None
+    crop_max_offsets: np.ndarray = None
 
     @property
     def fingerprint(self):
@@ -34,8 +37,10 @@ class FeatureSplit:
         if not len(indices):
             raise ValueError(f"{self.mouse}: no {self.split} windows on days {list(days)}")
         inputs = None if self.inputs is None else np.asarray(self.inputs[indices])
+        segments = None if self.crop_segments is None else np.asarray(self.crop_segments[indices])
+        offsets = None if self.crop_max_offsets is None else np.asarray(self.crop_max_offsets)[indices]
         return FeatureSplit(self.mouse, self.split, inputs, np.asarray(self.labels)[indices],
-                            self.table.iloc[indices].reset_index(drop=True))
+                            self.table.iloc[indices].reset_index(drop=True), segments, offsets)
 
     def scale(self, indices=None):
         # Preserve absolute spectral amplitude before the neural log transform.
@@ -46,6 +51,15 @@ class FeatureSplit:
         if scale != 1.0:
             raise ValueError("The neural STFT frontend requires identity normalization")
         values = np.array(self.inputs[indices], dtype=np.float32, copy=True)
+        labels = np.array(self.labels[indices], dtype=np.int64, copy=True)
+        return torch.from_numpy(values).to(device), torch.from_numpy(labels).to(device)
+
+
+    def random_crop_batch(self, indices, rng, device):
+        """Training-only: a fresh random crop of each row's context segment."""
+        if self.crop_segments is None:
+            raise ValueError("Random crops require DataStore.load_crops")
+        values = random_crops(self.crop_segments, self.crop_max_offsets, indices, rng)
         labels = np.array(self.labels[indices], dtype=np.int64, copy=True)
         return torch.from_numpy(values).to(device), torch.from_numpy(labels).to(device)
 
@@ -88,3 +102,12 @@ class DataStore:
         table.to_csv(self.artifact_dir / mouse / f"{split}_samples.csv", index=False)
         self.loaded[key] = result
         return result
+
+    def load_crops(self, mouse, split):
+        """The same split with cached context segments for training-time random crops."""
+        key = (mouse, split, "crops")
+        if key not in self.loaded:
+            base = self.load(mouse, split)
+            segments, offsets = crop_segments(self.dataset, mouse, split, base.table, self.cache_dir / "crops")
+            self.loaded[key] = replace(base, crop_segments=segments, crop_max_offsets=offsets)
+        return self.loaded[key]
