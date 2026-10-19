@@ -67,10 +67,10 @@ def train_main():
 
 
 def evaluate_main():
-    parser = argparse.ArgumentParser(description="Run inference with selected per-mouse checkpoints; no fitting")
+    parser = argparse.ArgumentParser(description="Replay query/selection or test using selected checkpoints; no fitting")
     data_arguments(parser)
     parser.add_argument("--split", choices=["validation", "test"], default="test",
-                        help="test: held-out eval (default); validation: training query replay")
+                        help="test: held-out eval (default); validation: separate query and selection replay")
     args = parser.parse_args()
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, args.run_dir / "data")
     result = evaluate_run(store, args.run_dir, resolve_device(args.device), args.split)

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 import numpy as np
+import torch
 
 from source_data import DAY_SPLITS
 
@@ -59,24 +60,61 @@ def crops_support(config):
             and config.algorithm != "log_stft")
 
 
-def support_inputs(split, indices, config, rng, device):
-    """Support windows for any CNN fit: K random crops per window, or the fixed windows."""
+def crops_query(config):
+    return (config.augment_random_crop and config.random_crop_scope in {"both", "query"}
+            and config.algorithm != "log_stft")
+
+
+def event_crop_indices(split, indices, count):
+    """Choose K crop contexts per event and class, independent of fixed-window count.
+
+    Positive rows share their event's interval. Negative rows carry only the event's
+    budget and recording day; materialization draws from that day's complete safe
+    interval pool. Every event contributes K positives and K negatives.
+    """
+    indices = np.asarray(indices, dtype=np.int64)
+    groups = split.table.iloc[indices].groupby(["mouse", "day", "event_index", "label"], sort=False)
+    return np.concatenate([np.repeat(indices[positions[0]], count)
+                           for positions in groups.indices.values()])
+
+
+def support_indices(split, indices, config):
+    """Plan the complete support before batching, so events are counted only once."""
     if crops_support(config):
-        return split.random_crop_batch(np.tile(indices, config.support_crops), rng, device)
+        return event_crop_indices(split, indices, config.support_crops)
+    return np.asarray(indices, dtype=np.int64)
+
+
+def support_inputs(split, indices, config, rng, device):
+    """Materialize already planned support contexts, or unchanged fixed windows."""
+    if crops_support(config):
+        return split.random_crop_batch(indices, rng, device)
     return split.batch(indices, split.scale(indices), device)
 
 
-def episode_batch(support_split, query_split, episode, config, rng, device):
-    support = balanced_indices(support_split.labels, episode.support_indices, config.support_per_class, rng)
-    query = balanced_indices(query_split.labels, episode.query_indices, config.query_per_class, rng)
+def event_sample_weights(split, indices, device):
+    """Each represented event has unit total weight, including its matched negatives."""
+    rows = split.table.iloc[indices]
+    counts = rows.groupby(["mouse", "day", "event_index"], sort=False).label.transform("size")
+    return torch.as_tensor(1.0 / counts.to_numpy(dtype=np.float32), device=device)
+
+
+def episode_batch(support_split, query_split, episode, config, rng, device, *, return_event_weights=False):
+    support = support_indices(support_split, episode.support_indices, config)
+    support = balanced_indices(support_split.labels, support, config.support_per_class, rng)
+    crop_query = crops_query(config)
+    query = (event_crop_indices(query_split, episode.query_indices, config.query_crops)
+             if crop_query else episode.query_indices)
+    query = balanced_indices(query_split.labels, query, config.query_per_class, rng)
     # Identity scaling preserves absolute amplitude before the neural frontend.
     scale = support_split.scale(support)
     # Crop positions come from the episode RNG, so checkpoints resume them exactly and a
     # fixed inner_shuffle_seed also fixes them.
-    crop_query = config.augment_random_crop and config.random_crop_scope in {"both", "query"}
-    # K independent crops per support window let one inner fit see several positions of each event.
+    # Cropped sides contribute K examples per event and class before optional sample caps.
     support_batch = support_inputs(support_split, support, config, rng, device)
-    if not crop_query:
-        return support_batch, query_split.batch(query, scale, device)
-    # Several independent crops per query window average the outer loss over crop positions.
-    return support_batch, query_split.random_crop_batch(np.tile(query, config.query_crops), rng, device)
+    query_batch = (query_split.random_crop_batch(query, rng, device) if crop_query else
+                   query_split.batch(query, scale, device))
+    if return_event_weights:
+        return support_batch, query_batch, (event_sample_weights(support_split, support, device),
+                                           event_sample_weights(query_split, query, device))
+    return support_batch, query_batch

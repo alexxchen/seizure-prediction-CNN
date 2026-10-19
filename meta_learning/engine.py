@@ -18,7 +18,7 @@ from meta_learning.adaptation import adapt_model, predict
 from meta_learning.algorithms import meta_objective, pooled_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json
 from meta_learning.config import Config
-from meta_learning.episodes import crops_support, split_episode, episode_batch
+from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch
 from meta_learning.model import MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
@@ -242,10 +242,12 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
         if (previous["config"] != config.to_dict() or previous["source_sha256"] != source_hashes() or
                 previous["runtime"] != runtime_identity(device)):
             raise ValueError("Resume requires identical config, sources, and runtime")
-    load = store.load_crops if config.augment_random_crop and config.algorithm != "log_stft" else store.load
-    training = {mouse: load(mouse, "train") for mouse in config.targets}
+    training = {mouse: (store.load_crops(mouse, "train") if crops_support(config) else
+                        store.load(mouse, "train")) for mouse in config.targets}
     # Only the configured query days supply outer gradients; selection days stay held out.
-    queries = {mouse: load(mouse, "validation").subset_days(config.query_validation_days)
+    queries = {mouse: (store.load_crops(mouse, "validation", days=config.query_validation_days)
+                      if crops_query(config) else
+                      store.load(mouse, "validation").subset_days(config.query_validation_days))
                for mouse in config.targets}
     episodes = {mouse: split_episode(training[mouse], queries[mouse]) for mouse in config.targets}
     provenance = dict(config=config.to_dict(), source_sha256=source_hashes(),
@@ -277,6 +279,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                          mouse_order=list(config.targets),
                                          tasks_per_step=0 if config.algorithm == "log_stft" else len(config.targets),
                                          episodes="One fixed train-support/validation-query task per mouse", gradient_reduction="Mean per mouse"),
+                      pooled_example_weighting="Mean of per-event losses across support and query; every event has equal weight",
                       normalization="Identity (scale=1) before the neural frontend; no fitted statistics",
                       batchnorm=("Support batch statistics during training; query/test use exact support statistics of the final "
                                  "weights, recalibrated differentiably after each fit" if config.batchnorm_recalibration else
@@ -284,17 +287,22 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       augmentation=(dict(crop_config=sample_pipeline.CROP_CONFIG,
                                          scope=config.random_crop_scope, query_crops=config.query_crops,
                                          support_crops=config.support_crops,
-                                         policy="Meta/pooled training batches only (support, query, or both per scope): "
+                                         crop_count_unit="per_event_per_class",
+                                         policy="Meta/pooled support, query, or both per scope, and per-mouse support fitting: "
                                                 "fresh uniformly placed 112 s crops of each row's context segment every "
-                                                "outer step from the episode RNG; query_crops independent crops per query "
-                                                "window, loss averaged; fixed windows for per-mouse fitting, selection, and eval")
+                                                "outer step from the episode RNG; K crops per event and class; negatives "
+                                                "sample uniformly over all legal starts in eligible safe intervals of the "
+                                                "same mouse and day, independently of fixed negative rows; optional per-class caps "
+                                                "limit generated examples; query loss averaged; per-mouse fitting uses the "
+                                                "same support policy with a fixed seed; fixed windows for selection, query-refit "
+                                                "evaluation, and test; no crops for log-STFT")
                                     if config.augment_random_crop else "None"),
                       inner_shuffles=("Fresh window order and minibatch shuffles every outer step"
                                       if config.inner_shuffle_seed is None else
                                       f"Fixed per task: seed {config.inner_shuffle_seed} + task index; "
                                       "identical window order and minibatch shuffles every outer step"),
                       inner_updates=(f"Task-local CNN {config.inner_optimizer}; exactly {config.inner_epochs} full epochs "
-                                     + (f"over {config.support_crops} random crops per support window (meta inner fits "
+                                     + (f"over {config.support_crops} random crops per event and class (meta inner fits "
                                         "from the episode RNG; per-mouse fits from a fixed per-mouse seed)"
                                         if crops_support(config) else "over fixed support windows")
                                      + " in both meta inner and per-mouse fits"
@@ -389,7 +397,9 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 # A fixed seed reuses the same window order and inner minibatch shuffles every
                 # outer step, so the meta objective is a deterministic function of the frontend.
                 task_rng = rng if fixed_seed is None else np.random.default_rng(fixed_seed)
-                support, query = episode_batch(training[mouse], queries[mouse], episode, config, task_rng, device)
+                batches = episode_batch(training[mouse], queries[mouse], episode, config, task_rng, device,
+                                        return_event_weights=config.algorithm == "pooled")
+                support, query = batches[:2]
                 if config.algorithm == "meta":
                     with inner_shuffle_rng(fixed_seed, device):
                         loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
@@ -402,7 +412,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                     fit_progress("query_task", step=step, task=task_index, mouse=mouse,
                                  query_split="validation", query_days=list(episode.query_days))(fit["query"])
                 else:
-                    loss = pooled_objective(model, support, query, config)
+                    loss = pooled_objective(model, support, query, config, event_weights=batches[2])
                 if not torch.isfinite(loss):
                     raise FloatingPointError("Non-finite outer loss")
                 (loss / len(config.targets)).backward()
@@ -486,7 +496,9 @@ def evaluate_run(store, run_dir, device, split="test"):
         raise ValueError("Selection belongs to another run")
     config = Config.from_dict(metadata["provenance"]["config"])
     seed_everything(config.seed)
-    subjects = {}
+    roles = ([entry for entry in validation_roles(config) if entry[1] == "validation"]
+             if split == "validation" else [("eval", "test", None)])
+    subjects = {role: {} for role, _, _ in roles}
     for mouse in config.targets:
         record = selection["adapted_models"][mouse]
         path = run_dir / record["path"]
@@ -502,20 +514,39 @@ def evaluate_run(store, run_dir, device, split="test"):
         values = store.load(mouse, split)
         if values.fingerprint != state[f"{split}_fingerprint"]:
             raise ValueError(f"{split} sample provenance changed")
-        metrics, probabilities = prediction_metrics(values.labels, predict(model, values, state["scale"], config.batch_size, device))
-        metrics["evaluation_protocol_sha256"] = values.fingerprint
-        metrics["classifier_fit"] = state["classifier_fit"]
-        subjects[mouse] = metrics
-        destination = run_dir / "evaluation" / split / mouse
-        destination.mkdir(parents=True, exist_ok=True)
-        table = values.table.copy()
-        table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
-        table.to_csv(destination / "predictions.csv", index=False)
-        write_json(destination / "metrics.json", metrics)
-    report = dict(split=split, role="eval" if split == "test" else "query", selected_step=selection["step"], identity=metadata["identity"],
-                  aggregate={key: float(np.mean([row[key] for row in subjects.values()]))
-                             for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]},
-                  subjects=subjects, evaluation_protocol_sha256=digest(
-                      {mouse: row["evaluation_protocol_sha256"] for mouse, row in subjects.items()}))
+        for role, _, days in roles:
+            scored = values.subset_days(days) if days is not None else values
+            if scored.fingerprint != state[f"{role}_fingerprint"]:
+                raise ValueError(f"{role} sample provenance changed")
+            metrics, probabilities = prediction_metrics(scored.labels, predict(
+                model, scored, state["scale"], config.batch_size, device))
+            metrics.update(evaluation_protocol_sha256=scored.fingerprint,
+                           classifier_fit=state["classifier_fit"],
+                           days=sorted(int(day) for day in scored.table.day.unique()))
+            subjects[role][mouse] = metrics
+            directory = run_dir / "evaluation" / split
+            destination = directory / role / mouse if split == "validation" else directory / mouse
+            destination.mkdir(parents=True, exist_ok=True)
+            table = scored.table.copy()
+            table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
+            table.to_csv(destination / "predictions.csv", index=False)
+            write_json(destination / "metrics.json", metrics)
+    reports = {}
+    for role, _, days in roles:
+        rows = subjects[role]
+        reports[role] = dict(split=split, role=role, days=list(days or DAY_SPLITS[split]),
+            selected_step=selection["step"], identity=metadata["identity"],
+            aggregate={key: float(np.mean([row[key] for row in rows.values()]))
+                       for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]},
+            subjects=rows, evaluation_protocol_sha256=digest(
+                {mouse: row["evaluation_protocol_sha256"] for mouse, row in rows.items()}))
+        if split == "validation":
+            write_json(run_dir / "evaluation" / split / role / "result.json", reports[role])
+    if split == "validation":
+        report = dict(reports["query"])
+        if "selection" in reports:
+            report["selection"] = reports["selection"]
+    else:
+        report = reports["eval"]
     write_json(run_dir / "evaluation" / split / "result.json", report)
     return report

@@ -149,6 +149,10 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
             variance = state[2 * len(names):optimizer_size]
             buffers = dict(zip(buffers, state[optimizer_size:]))
             steps += len(selected)
+        measure_epoch = (epoch == config.inner_epochs or (config.inner_log_every > 0 and
+                         (epoch == 1 or epoch % config.inner_log_every == 0)))
+        if not measure_epoch:
+            continue
         loss, accuracy = measure(weights)
         if loss < best_loss:
             best_loss, best_epoch = loss, epoch
@@ -158,12 +162,13 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
                    support_accuracy=accuracy, best_support_loss=best_loss,
                    relative_loss_change=relative_change)
         history.append(row)
-        if progress and (epoch == config.inner_epochs or
-                         (config.inner_log_every > 0 and (epoch == 1 or epoch % config.inner_log_every == 0))):
+        if progress:
             progress(dict(row, selected_epoch=epoch))
     report = dict(samples=len(labels), epochs_requested=config.inner_epochs,
-                  epochs_run=len(history), optimizer_steps=steps,
-                  selected_epoch=len(history), best_epoch=best_epoch, initial_support_loss=initial_loss,
+                  epochs_run=config.inner_epochs, optimizer_steps=steps,
+                  selected_epoch=config.inner_epochs, best_epoch=best_epoch, initial_support_loss=initial_loss,
+                  diagnostic_epochs=[row["epoch"] for row in history],
+                  diagnostic_evaluations=1 + len(history),
                   optimizer=config.inner_optimizer, classifier_dropout=config.classifier_dropout,
                   batchnorm="Support batch statistics during training; support EMA during evaluation",
                   initial_support_accuracy=initial_accuracy, last_support_accuracy=history[-1]["support_accuracy"],

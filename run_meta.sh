@@ -15,7 +15,7 @@ Usage: bash run_meta.sh [prepare|train|validate|test|check] [OPTIONS]
 
   prepare    Verify raw recordings and source annotation alignment
   train      Run meta, pooled, or standalone log-STFT training
-  validate   Replay training-query metrics on Days 8/11
+  validate   Replay query (Day 8) and selection (Day 11) metrics separately
   test       Replay held-out eval on Days 12/13 (also scored during training)
   check      Run unit and synthetic integration tests
 

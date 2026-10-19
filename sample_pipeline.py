@@ -121,15 +121,14 @@ def negative_pool(dataset, target, window_rows):
 
 # Training-time random crops: alternative real windows with the same label definition.
 CROP_CONFIG = dict(positive="Any 112 s window inside the event's 7-3 minute positive interval (128 s of start positions)",
-                   negative="Window start within +/-negative_jitter_seconds of the fixed negative, inside its safe region",
-                   negative_jitter_seconds=64)
+                   negative="All legal 112 s starts in eligible seizure-free intervals of the same mouse and day",
+                   negative_sampling="Uniform over legal starts, weighting each interval by its number of starts")
 
 
 def crop_ranges(dataset, target, rows):
     """Inclusive (first, last) source start rows that keep each row's label definition."""
     window_rows, offsets = sample_offsets()
     span = int(round((SAMPLE_CONFIG["positive_earlier_minutes"] - SAMPLE_CONFIG["positive_later_minutes"]) * 60 * SOURCE_HZ))
-    jitter = int(round(CROP_CONFIG["negative_jitter_seconds"] * SOURCE_HZ))
     regions = safe_regions(dataset, target)
     ranges = []
     for row in rows.itertuples():
@@ -142,7 +141,7 @@ def crop_ranges(dataset, target, rows):
             if len(region) != 1:
                 raise ValueError("Negative window is not inside exactly one safe region")
             left, right = region[0]
-            first, last = max(left, int(row.start_row) - jitter), min(right - window_rows, int(row.start_row) + jitter)
+            first, last = left, right - window_rows
         if not first <= row.start_row <= last or first < 0 or last + window_rows > dataset.sources[row.raw_file]["rows"]:
             raise ValueError("Crop range must contain the fixed window and stay inside the recording")
         ranges.append((first, last))

@@ -11,32 +11,32 @@ from source_data import DAY_SPLITS, TARGETS
 @dataclass(frozen=True)
 class Config:
     algorithm: str = "meta"
-    targets: tuple = tuple(TARGETS)
+    targets: tuple = ("X2",)
     seed: int = 0
-    outer_steps: int = 1000
+    outer_steps: int = 100
     inner_epochs: int = 50
     inner_checkpoint_steps: int = 5
     inner_log_every: int = 0
     inner_shuffle_seed: int | None = None
     batchnorm_recalibration: bool = True
     inner_optimizer: str = "sgd"
-    inner_lr: float = 5e-4
-    inner_momentum: float = 0.9
+    inner_lr: float = 0.01
+    inner_momentum: float = 0.0
     inner_beta1: float = 0.9
     inner_beta2: float = 0.999
     inner_epsilon: float = 1e-8
     classifier_dropout: float = 0.0
-    outer_lr: float = 5e-4
+    outer_lr: float = 0.001
     outer_weight_decay: float = 0.0
-    augment_random_crop: bool = False
+    augment_random_crop: bool = True
     random_crop_scope: str = "both"
-    query_crops: int = 1
-    support_crops: int = 1
-    query_validation_days: tuple = (8, 11)
-    selection_validation_days: tuple | None = None
+    query_crops: int = 64
+    support_crops: int = 40
+    query_validation_days: tuple = (8,)
+    selection_validation_days: tuple | None = (11,)
     support_per_class: int | None = None
     query_per_class: int | None = None
-    eval_every: int = 100
+    eval_every: int = 10
     checkpoint_every: int = 25
     batch_size: int = 32
     label_smoothing: float = 0.1
@@ -59,7 +59,7 @@ class Config:
         if type(self.inner_checkpoint_steps) is not int or self.inner_checkpoint_steps < 0:
             raise ValueError("inner_checkpoint_steps must be a nonnegative integer")
         if type(self.inner_log_every) is not int or self.inner_log_every < 0:
-            raise ValueError("inner_log_every must be a nonnegative integer (0 logs only the final epoch)")
+            raise ValueError("inner_log_every must be a nonnegative integer (0 measures/logs only the final epoch)")
         validation_days = set(DAY_SPLITS["validation"])
         query_days = self.query_validation_days
         if (type(query_days) is not tuple or not query_days or len(set(query_days)) != len(query_days) or
