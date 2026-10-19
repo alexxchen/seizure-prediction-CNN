@@ -119,7 +119,7 @@ def validate(initial, store, config, device, step, run_dir, identity, *, fit_sta
             if days is not None:
                 values = values.subset_days(days)
             metrics, probabilities = prediction_metrics(values.labels, predict(
-                model, values, scale, config.batch_size, device))
+                model, values, scale, config.batch_size, device, frontend_batch_size=config.frontend_batch_size))
             metrics.update(evaluation_protocol_sha256=values.fingerprint, classifier_fit=fit,
                            days=sorted(int(day) for day in values.table.day.unique()))
             subjects[role][mouse] = metrics
@@ -269,7 +269,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       frontend_config=(dict(architecture="pure_log_stft", input_transform="frozen DFT filterbank, log1p_base10 magnitude",
                           temporal_pooling="adaptive_average", time_bins=LogSTFTFrontend.output_shape[1],
                           frequency_bins=LogSTFTFrontend.output_shape[0], parameters=0)
-                          if config.algorithm == "log_stft" else FRONTEND_CONFIG),
+                          if config.algorithm == "log_stft" else
+                          dict(FRONTEND_CONFIG, checkpoint_batch_size=config.frontend_batch_size)),
                       baseline_policy="Standalone algorithm=log_stft only; no automatic startup baseline",
                       day_splits=DAY_SPLITS, cnn_input_shape=list((LogSTFTFrontend if config.algorithm == "log_stft" else WaveformFrontend).output_shape),
                       cnn="1-D CNN: three Conv1d/AxisBatchNorm/max-pool stages (16, 32, 64), flatten, dense 128, 2 logits",
@@ -342,7 +343,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
     seed_everything(config.seed)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
-    model = MetaModel(cnn_seed=config.seed).to(device)
+    model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size).to(device)
     if config.algorithm == "log_stft":
         return run_log_stft(model, store, config, device, run_dir, identity)
     model.cnn.requires_grad_(config.algorithm == "pooled")
@@ -507,7 +508,7 @@ def evaluate_run(store, run_dir, device, split="test"):
         state = torch.load(path, map_location="cpu", weights_only=True)
         if state["identity"] != metadata["identity"] or state["mouse"] != mouse:
             raise ValueError("Selected checkpoint identity mismatch")
-        model = MetaModel().to(device)
+        model = MetaModel(frontend_batch_size=config.frontend_batch_size).to(device)
         if config.algorithm == "log_stft":
             model.use_frontend(LogSTFTFrontend().to(device), config.seed)
         model.load_state_dict(state["model"])
@@ -519,7 +520,8 @@ def evaluate_run(store, run_dir, device, split="test"):
             if scored.fingerprint != state[f"{role}_fingerprint"]:
                 raise ValueError(f"{role} sample provenance changed")
             metrics, probabilities = prediction_metrics(scored.labels, predict(
-                model, scored, state["scale"], config.batch_size, device))
+                model, scored, state["scale"], config.batch_size, device,
+                frontend_batch_size=config.frontend_batch_size))
             metrics.update(evaluation_protocol_sha256=scored.fingerprint,
                            classifier_fit=state["classifier_fit"],
                            days=sorted(int(day) for day in scored.table.day.unique()))

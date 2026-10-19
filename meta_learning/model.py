@@ -8,9 +8,10 @@ from models.cnn import SeizureCNN
 
 
 class MetaModel(nn.Module):
-    def __init__(self, cnn_seed=None):
+    def __init__(self, cnn_seed=None, frontend_batch_size=32):
         super().__init__()
-        self.frontend = WaveformFrontend(seed=cnn_seed if cnn_seed is not None else 0)
+        self.frontend = WaveformFrontend(seed=cnn_seed if cnn_seed is not None else 0,
+                                         batch_size=frontend_batch_size)
         self.cnn = SeizureCNN(self.cnn_input_shape())
         if cnn_seed is not None:
             self.reset_classifier(cnn_seed)

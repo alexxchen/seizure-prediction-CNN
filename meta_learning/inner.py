@@ -57,14 +57,12 @@ class _SupportForward(torch.nn.Module):
         return logits, tuple(self.classifier.buffers())
 
 
-def update_segment(training, names, buffers, features, labels, state, batches, config, differentiable, step=0):
+def update_segment(training, names, buffers, features, labels, state, batches, config, differentiable):
     count = len(names)
-    optimizer_size = count * (3 if config.inner_optimizer == "adam" else 2)
-    parameters, momentum = state[:count], state[count:2 * count]
-    variance = state[2 * count:optimizer_size]
+    parameters = state[:count]
     # Functional BatchNorm replaces these values out of place on every support
     # forward. Include the EMA state in the trajectory and its hypergradient.
-    buffers = dict(zip(buffers, state[optimizer_size:]))
+    buffers = dict(zip(buffers, state[count:]))
     forward = _SupportForward(training)
     for indices in batches:
         logits, updated_buffers = functional_call(forward,
@@ -77,31 +75,12 @@ def update_segment(training, names, buffers, features, labels, state, batches, c
         norm = torch.linalg.vector_norm(torch.stack([gradient.norm() for gradient in gradients]))
         clip = (config.gradient_clip / (norm + 1e-6)).clamp(max=1.0)
         gradients = tuple(gradient * clip for gradient in gradients)
-        step += 1
-        if config.inner_optimizer == "adam":
-            momentum = tuple(config.inner_beta1 * value + (1 - config.inner_beta1) * gradient
-                             for value, gradient in zip(momentum, gradients))
-            variance = tuple(config.inner_beta2 * value + (1 - config.inner_beta2) * gradient.square()
-                             for value, gradient in zip(variance, gradients))
-            # Standard Adam values, with a finite zero subgradient when v == 0.
-            # Taking sqrt(0) directly creates NaNs in the outer hypergradient.
-            roots = tuple(torch.where(value > 0,
-                          torch.sqrt(torch.where(value > 0, value, torch.ones_like(value))),
-                          torch.zeros_like(value)) for value in variance)
-            parameters = tuple(parameter - (config.inner_lr / (1 - config.inner_beta1 ** step)) * first /
-                               (root / math.sqrt(1 - config.inner_beta2 ** step) + config.inner_epsilon)
-                               for parameter, first, root in zip(parameters, momentum, roots))
-        else:
-            momentum = tuple(config.inner_momentum * value + gradient
-                             for value, gradient in zip(momentum, gradients))
-            parameters = tuple(parameter - config.inner_lr * value
-                               for parameter, value in zip(parameters, momentum))
+        parameters = tuple(parameter - config.inner_lr * gradient
+                           for parameter, gradient in zip(parameters, gradients))
         if not differentiable:
             parameters = tuple(value.detach().requires_grad_(True) for value in parameters)
-            momentum = tuple(value.detach() for value in momentum)
-            variance = tuple(value.detach() for value in variance)
             buffers = {name: value.detach() for name, value in buffers.items()}
-    return (*parameters, *momentum, *variance, *buffers.values())
+    return (*parameters, *buffers.values())
 
 
 def run_fit(reference, features, labels, config, differentiable, progress, segments=None):
@@ -110,10 +89,7 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
     names = tuple(name for name, _ in reference.named_parameters())
     weights = tuple(parameter.detach().clone().requires_grad_(True)
                     for parameter in reference.parameters())
-    velocity = tuple(torch.zeros_like(parameter) for parameter in weights)
-    variance = tuple(torch.zeros_like(parameter) for parameter in weights) if config.inner_optimizer == "adam" else ()
     buffers = {name: value.detach().clone() for name, value in reference.named_buffers()}
-    optimizer_size = len(names) * (3 if config.inner_optimizer == "adam" else 2)
     if not differentiable:
         features = features.detach()
 
@@ -139,15 +115,14 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
             selected = batches[start:start + segment_size]
             if segments is not None:
                 segments.append(dict(state=tuple(value.detach().cpu().clone() for value in
-                    (*weights, *velocity, *variance, *buffers.values())),
+                    (*weights, *buffers.values())),
                     batches=tuple(indices.cpu() for indices in selected), cpu_rng=torch.get_rng_state(),
-                    cuda_rng=torch.cuda.get_rng_state(features.device) if features.is_cuda else None, step=steps))
+                    cuda_rng=torch.cuda.get_rng_state(features.device) if features.is_cuda else None))
             state = update_segment(training, names, buffers, features, labels,
-                                   (*weights, *velocity, *variance, *buffers.values()),
-                                   selected, config, differentiable, step=steps)
-            weights, velocity = state[:len(names)], state[len(names):2 * len(names)]
-            variance = state[2 * len(names):optimizer_size]
-            buffers = dict(zip(buffers, state[optimizer_size:]))
+                                   (*weights, *buffers.values()),
+                                   selected, config, differentiable)
+            weights = state[:len(names)]
+            buffers = dict(zip(buffers, state[len(names):]))
             steps += len(selected)
         measure_epoch = (epoch == config.inner_epochs or (config.inner_log_every > 0 and
                          (epoch == 1 or epoch % config.inner_log_every == 0)))
@@ -181,7 +156,7 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
 class _ReplayClassifierFit(torch.autograd.Function):
     """Reverse the complete optimizer trajectory a segment at a time.
 
-    Forward fitting saves detached CNN, optimizer, and BatchNorm boundaries in CPU memory.
+    Forward fitting saves detached CNN and BatchNorm boundaries in CPU memory.
     Backward propagates adjoints through every segment, accumulating the exact
     support-feature gradient. GPU activation memory depends on segment length,
     while CPU checkpoint storage grows with the number of segments. No gradient
@@ -200,7 +175,6 @@ class _ReplayClassifierFit(torch.autograd.Function):
         ctx.training = training_classifier(reference, config)
         ctx.names = tuple(fit.parameters)
         ctx.buffer_names, ctx.config = tuple(fit.buffers), config
-        ctx.optimizer_size = len(ctx.names) * (3 if config.inner_optimizer == "adam" else 2)
         report.update(fit.report)
         return tuple(value.detach() for value in (*fit.parameters.values(), *fit.buffers.values()))
 
@@ -217,10 +191,8 @@ class _ReplayClassifierFit(torch.autograd.Function):
             return gradient if gradient is not None else torch.zeros_like(value, device=device)
 
         adjoints = tuple(output_adjoint(i, reference_state[i]) for i in range(count))
-        adjoints += tuple(torch.zeros_like(value, device=device)
-                          for value in reference_state[count:ctx.optimizer_size])
         adjoints += tuple(output_adjoint(count + i, value)
-                          for i, value in enumerate(reference_state[ctx.optimizer_size:]))
+                          for i, value in enumerate(reference_state[count:]))
         feature_gradient = torch.zeros_like(features)
         devices = [device.index if device.index is not None else torch.cuda.current_device()] if features.is_cuda else []
         with torch.random.fork_rng(devices=devices), torch.enable_grad():
@@ -234,7 +206,7 @@ class _ReplayClassifierFit(torch.autograd.Function):
                 inputs = features.detach().requires_grad_(True)
                 batches = tuple(indices.to(device) for indices in segment["batches"])
                 final = update_segment(ctx.training, ctx.names, ctx.buffer_names, inputs, labels,
-                                       initial, batches, ctx.config, True, step=segment["step"])
+                                       initial, batches, ctx.config, True)
                 gradients = torch.autograd.grad(final, (inputs, *initial), grad_outputs=adjoints,
                                                 allow_unused=True)
                 if gradients[0] is not None:
@@ -267,7 +239,7 @@ def calibrate_batchnorm(reference, parameters, buffers, features):
 def fit_classifier(reference, features, labels, config, *, differentiable, progress=None):
     """Train exactly the configured full epochs; optionally replay exact gradients.
 
-    CNN weights, optimizer moments, and support BatchNorm statistics persist within a task. Support metrics
+    CNN weights and support BatchNorm statistics persist within a task. Support metrics
     are diagnostic only; the final epoch supplies the classifier. With batchnorm_recalibration, evaluation
     uses exact support statistics of the final weights instead of the warm-up-biased running EMA. A zero checkpoint interval enables ordinary
     full unrolling for small reference checks; final per-mouse fitting needs no

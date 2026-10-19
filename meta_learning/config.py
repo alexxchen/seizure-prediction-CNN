@@ -21,10 +21,6 @@ class Config:
     batchnorm_recalibration: bool = True
     inner_optimizer: str = "sgd"
     inner_lr: float = 0.01
-    inner_momentum: float = 0.0
-    inner_beta1: float = 0.9
-    inner_beta2: float = 0.999
-    inner_epsilon: float = 1e-8
     classifier_dropout: float = 0.0
     outer_lr: float = 0.001
     outer_weight_decay: float = 0.0
@@ -39,19 +35,20 @@ class Config:
     eval_every: int = 10
     checkpoint_every: int = 25
     batch_size: int = 32
+    frontend_batch_size: int = 32
     label_smoothing: float = 0.1
     gradient_clip: float = 5.0
 
     def validate(self):
         if self.algorithm not in {"meta", "pooled", "log_stft"}:
             raise ValueError("algorithm must be meta, pooled, or log_stft")
-        if self.inner_optimizer not in {"adam", "sgd"}:
-            raise ValueError("inner_optimizer must be adam or sgd")
+        if self.inner_optimizer != "sgd":
+            raise ValueError("inner_optimizer must be sgd (without momentum)")
         if (not self.targets or len(set(self.targets)) != len(self.targets) or
                 any(mouse not in TARGETS for mouse in self.targets)):
             raise ValueError("Choose distinct MouseLFP targets")
         integers = ["outer_steps", "inner_epochs",
-                    "eval_every", "batch_size", "checkpoint_every"]
+                    "eval_every", "batch_size", "frontend_batch_size", "checkpoint_every"]
         if any(type(getattr(self, key)) is not int or getattr(self, key) < 1 for key in integers):
             raise ValueError("Step counts and sample counts must be positive integers")
         if type(self.seed) is not int or self.seed < 0:
@@ -95,12 +92,11 @@ class Config:
             value = getattr(self, key)
             if value is not None and (type(value) is not int or value < 1):
                 raise ValueError(f"{key} must be null (all samples) or a positive integer")
-        for key in ["inner_lr", "inner_epsilon", "outer_lr", "gradient_clip"]:
+        for key in ["inner_lr", "outer_lr", "gradient_clip"]:
             value = getattr(self, key)
             if type(value) not in {float, int} or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{key} must be finite and positive")
-        for key in ["inner_momentum", "inner_beta1", "inner_beta2",
-                    "classifier_dropout", "label_smoothing"]:
+        for key in ["classifier_dropout", "label_smoothing"]:
             value = getattr(self, key)
             if type(value) not in {float, int} or not math.isfinite(value) or not 0 <= value < 1:
                 raise ValueError(f"{key} must be finite and in [0, 1)")
@@ -113,6 +109,12 @@ class Config:
 
     @classmethod
     def from_dict(cls, value):
+        value = dict(value)
+        # Older zero-momentum configurations describe the same plain SGD solver.
+        if "inner_momentum" in value:
+            momentum = value.pop("inner_momentum")
+            if type(momentum) not in {int, float} or momentum != 0:
+                raise ValueError("SGD momentum is no longer supported; remove inner_momentum")
         unknown = set(value) - {field.name for field in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown configuration fields: {sorted(unknown)}")

@@ -9,6 +9,26 @@ from meta_learning.episodes import crops_support, support_indices, support_input
 from meta_learning.inner import fit_classifier
 
 
+def support_features(model, training, config, rng, device):
+    """Encode at the frontend batch size while preserving the support crop RNG order."""
+    planned = support_indices(training, np.arange(len(training.labels)), config)
+    features, labels, pending = [], [], None
+    with torch.no_grad():
+        # Keep crop draws in the same batches as before; changing frontend_batch_size
+        # only changes feature computation, never the sampled training windows.
+        for start in range(0, len(planned), config.batch_size):
+            indices = planned[start:start + config.batch_size]
+            inputs, targets = support_inputs(training, indices, config, rng, torch.device("cpu"))
+            labels.append(targets.to(device))
+            pending = inputs if pending is None else torch.cat((pending, inputs))
+            while len(pending) >= config.frontend_batch_size:
+                features.append(model.frontend(pending[:config.frontend_batch_size].to(device)))
+                pending = pending[config.frontend_batch_size:]
+        if pending is not None and len(pending):
+            features.append(model.frontend(pending.to(device)))
+    return torch.cat(features), torch.cat(labels)
+
+
 def adapt_model(initial, training, config, device, seed, *, return_diagnostics=False, progress=None):
     if training.split != "train" or not training.table.day.between(0, 7).all():
         raise ValueError("Adaptation may only use Days 0-7")
@@ -24,15 +44,8 @@ def adapt_model(initial, training, config, device, seed, *, return_diagnostics=F
     with torch.random.fork_rng():
         torch.manual_seed(seed)
         rng = np.random.default_rng(seed)
-        planned = support_indices(training, np.arange(len(training.labels)), config)
-        features, labels = [], []
-        with torch.no_grad():
-            for start in range(0, len(planned), config.batch_size):
-                indices = planned[start:start + config.batch_size]
-                inputs, targets = support_inputs(training, indices, config, rng, device)
-                features.append(model.frontend(inputs))
-                labels.append(targets)
-        fit = fit_classifier(model.cnn, torch.cat(features), torch.cat(labels), config,
+        features, labels = support_features(model, training, config, rng, device)
+        fit = fit_classifier(model.cnn, features, labels, config,
                              differentiable=False, progress=progress)
         model.cnn.load_state_dict(dict(fit.parameters, **fit.buffers))
         fit.report.update(support_crops=config.support_crops if crops_support(config) else 0,
@@ -41,12 +54,15 @@ def adapt_model(initial, training, config, device, seed, *, return_diagnostics=F
     return (*result, fit.report) if return_diagnostics else result
 
 
-def predict(model, split, scale, batch_size, device):
+def predict(model, split, scale, batch_size, device, *, frontend_batch_size=None):
     model.eval()
+    frontend_batch_size = frontend_batch_size or getattr(model.frontend, "batch_size", batch_size)
     result = []
     with torch.inference_mode():
-        for start in range(0, len(split.labels), batch_size):
-            indices = np.arange(start, min(start + batch_size, len(split.labels)))
+        for start in range(0, len(split.labels), frontend_batch_size):
+            indices = np.arange(start, min(start + frontend_batch_size, len(split.labels)))
             inputs, _ = split.batch(indices, scale, device)
-            result.append(model(inputs).softmax(dim=1).cpu().numpy())
+            features = model.frontend(inputs)
+            for batch in features.split(batch_size):
+                result.append(model.cnn(batch).softmax(dim=1).cpu().numpy())
     return np.concatenate(result)

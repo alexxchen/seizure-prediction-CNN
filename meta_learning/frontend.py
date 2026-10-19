@@ -27,7 +27,7 @@ FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672, in
     block="Pre-activation: GroupNorm(8) -> GELU -> Conv1d k3 (dilation d) -> GroupNorm(8) -> GELU -> Conv1d k3 "
           "(zero-initialized), added to the residual stream",
     head="GroupNorm(8) -> GELU -> Conv1d(64 -> output_channels, k1); output is a (channels, time) sequence",
-    output_channels=64, time_bins=56, checkpoint_batch_size=32,
+    output_channels=64, time_bins=56,
     initialization="Seeded PyTorch defaults (random); zero-initialized last conv in each residual block; "
                    "no alignment with log-STFT")
 
@@ -94,8 +94,11 @@ class WaveformFrontend(nn.Module):
 
     output_shape = (FRONTEND_CONFIG["output_channels"], FRONTEND_CONFIG["time_bins"])
 
-    def __init__(self, seed=0):
+    def __init__(self, seed=0, batch_size=32):
         super().__init__()
+        if type(batch_size) is not int or batch_size < 1:
+            raise ValueError("Frontend batch size must be a positive integer")
+        self.batch_size = batch_size
         c = FRONTEND_CONFIG
         # Initialize CPU layers without advancing caller CPU/CUDA RNG streams,
         # keeping the reference task CNN unchanged when the frontend is replaced.
@@ -121,7 +124,8 @@ class WaveformFrontend(nn.Module):
         with torch.no_grad():
             state = {name: float(parameter.norm()) for name, parameter in self.named_parameters()
                      if name.endswith("weight") and parameter.ndim > 1}
-        return dict(FRONTEND_CONFIG, parameters=sum(parameter.numel() for parameter in self.parameters()),
+        return dict(FRONTEND_CONFIG, checkpoint_batch_size=self.batch_size,
+                    parameters=sum(parameter.numel() for parameter in self.parameters()),
                     state=dict(weight_norms=state))
 
     def _forward_batch(self, waveform):
@@ -136,7 +140,7 @@ class WaveformFrontend(nn.Module):
         outputs = []
         differentiable = torch.is_grad_enabled() and (
             waveform.requires_grad or any(parameter.requires_grad for parameter in self.parameters()))
-        for batch in waveform.split(FRONTEND_CONFIG["checkpoint_batch_size"]):
+        for batch in waveform.split(self.batch_size):
             # Non-reentrant checkpointing also supports autograd.grad and inputs
             # without requires_grad. It recomputes all activations exactly.
             outputs.append(checkpoint(self._forward_batch, batch, use_reentrant=False)
