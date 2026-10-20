@@ -1,9 +1,9 @@
 {
   "algorithm": "meta",
-  "targets": ["X2"],
+  "targets": ["X1","X2","X4","X9","X10","X14","X15"],
   "seed": 0,
   "outer_steps": 100,
-  "inner_epochs": 30,
+  "inner_epochs": 40,
   "inner_checkpoint_steps": 20,
   "inner_log_every": 0,
   "inner_shuffle_seed": null,

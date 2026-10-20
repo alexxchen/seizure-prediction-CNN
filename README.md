@@ -158,6 +158,31 @@ OUTPUT_DIR="$PWD/results/waveform-conv-meta" ./run_meta.sh test
 
 This loads the selected per-mouse checkpoints and identity scales, writes test predictions, and leaves model-selection records unchanged. The Python inference interface defaults to `--split test`; use `--split valid` or `--split query` for a single role, or legacy `--split validation` to replay both separately. Neither replay command trains a CNN or fits statistics.
 
+### Frontend feature distributions
+
+Use the selected adapted checkpoints to plot each mouse's full frontend output and classification errors:
+
+```bash
+python scripts/plot_frontend_tsne.py --run-dir results/waveform-conv-meta \
+  --data-dir /data/users/jianchen/data/seizure_data \
+  --cache-dir /data/users/jianchen/data/seizure_data-cache/meta-learning --device cuda
+```
+
+Run in the environment matching `requirements.txt`; `--prepared-dir` defaults to `CACHE_DIR/prepared`. The script verifies and imports the run's saved source snapshot, freezes the frontend and fitted CNN, and checks replayed query/valid/test predictions against the saved predictions. No fitting or BatchNorm recalibration occurs. It uses every fixed 112-second reference window, including support reference windows rather than the random crops used during fitting. `--targets X1,X2` optionally restricts the output to selected mice with adapted checkpoints.
+
+Each mouse gets a separate t-SNE layout of flattened frontend features (currently 64 × 56), preceded by 50-component PCA fitted only on support reference features, with no extra scaling. Labels never enter either projection. Support, query, optional valid, and test panels share that mouse's coordinates; green/blue indicate true positive/negative labels and red crosses indicate classification errors at threshold 0.5. Test participates only in the exploratory layout. Coordinates across different mice are independent, and t-SNE cluster sizes and distances do not quantify predictive performance.
+
+PNG/PDF/SVG plots, full features, per-window coordinates/probabilities, FP/FN counts, a script snapshot, and verification metadata go into a new timestamped directory under `RUN_DIR/visualizations/`. `--output` can select a new directory; existing directories are never overwritten. The training configuration and historical run artifacts remain unchanged.
+
+### Transfer the frozen frontend to unseen mice
+
+```bash
+python scripts/transfer_frontend.py --source-run results/waveform-conv-meta \
+  --run-dir results/transfers/unseen-mice --targets X4,X10,X15 --device cuda
+```
+
+This finite job uses the source run's verified saved implementation and selected frontend, trains one fresh CNN per target on Days 0-7, and reports query Days 8/11 and test Days 12/13. The frontend remains frozen; target query/test metrics never select weights. The complete epoch budget, support crop policy, optimizer, dropout, and batch sizes come from the source run's configuration. Per-mouse fit seeds are `seed + 10000 + target position` in the supplied target order. Outputs include checkpoints, predictions, source snapshots, and `report.json`/`report.md` in a new directory. Data/cache options match the visualization script; existing output directories are rejected.
+
 ### Short integration check
 
 ```bash
