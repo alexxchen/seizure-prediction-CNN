@@ -13,6 +13,6 @@ results/
 *.mat
 autoresearch-data/
 autoresearch-runs/
-run.log
+*.log
 prepared/
 meta-runs/

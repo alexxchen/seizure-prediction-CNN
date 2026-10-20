@@ -18,7 +18,7 @@ from meta_learning.adaptation import adapt_model, predict
 from meta_learning.algorithms import meta_objective, pooled_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json
 from meta_learning.config import Config
-from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch
+from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch, query_task_weights
 from meta_learning.model import MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
@@ -251,6 +251,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       store.load(mouse, "validation").subset_days(config.query_validation_days))
                for mouse in config.targets}
     episodes = {mouse: split_episode(training[mouse], queries[mouse]) for mouse in config.targets}
+    query_events, task_weights = query_task_weights(queries, episodes)
     provenance = dict(config=config.to_dict(), source_sha256=source_hashes(),
                       source_inventory_sha256=digest(verify_prepared(prepared_dir)["signature"]),
                       training_fingerprints={mouse: split.fingerprint for mouse, split in training.items()},
@@ -280,8 +281,13 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                              "Every configured mouse exactly once per outer step"),
                                          mouse_order=list(config.targets),
                                          tasks_per_step=0 if config.algorithm == "log_stft" else len(config.targets),
-                                         episodes="One fixed support/query task per mouse", gradient_reduction="Mean per mouse"),
-                      pooled_example_weighting="Mean of per-event losses across support and query; every event has equal weight",
+                                         episodes="One fixed support/query task per mouse",
+                                         gradient_reduction=("None" if config.algorithm == "log_stft" else
+                                             "Sum of mouse gradients weighted by eligible query-event counts"),
+                                         query_events=query_events,
+                                         outer_task_weights={} if config.algorithm == "log_stft" else task_weights),
+                      pooled_example_weighting="Within each task, mean of per-event support/query losses; "
+                                               "across tasks, weight by query-event counts as in meta",
                       normalization="Identity (scale=1) before the neural frontend; no fitted statistics",
                       batchnorm=("Support batch statistics during training; query/test use exact support statistics of the final "
                                  "weights, recalibrated differentiably after each fit" if config.batchnorm_recalibration else
@@ -295,7 +301,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                                 "outer step from the episode RNG; K crops per event and class; negatives "
                                                 "sample uniformly over all legal starts in eligible safe intervals of the "
                                                 "same mouse and day, independently of fixed negative rows; optional per-class caps "
-                                                "limit generated examples; query loss averaged; per-mouse fitting uses the "
+                                                "limit generated examples; query loss averaged within and across represented events; per-mouse fitting uses the "
                                                 "same support policy with a fixed seed; fixed windows for selection, query-refit "
                                                 "evaluation, and test; no crops for log-STFT")
                                     if config.augment_random_crop else "None"),
@@ -341,7 +347,9 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
             destination.write_bytes((ROOT / name).read_bytes())
         if source_hashes() != provenance["source_sha256"]:
             raise ValueError("Source files changed while snapshotting")
-    write_json(run_dir / "episodes.json", {mouse: [task.describe()] for mouse, task in episodes.items()})
+    write_json(run_dir / "episodes.json", {mouse: [dict(task.describe(), query_events=query_events[mouse],
+        outer_weight=0.0 if config.algorithm == "log_stft" else task_weights[mouse])]
+        for mouse, task in episodes.items()})
     seed_everything(config.seed)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -382,6 +390,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
     if not resume:
         save_checkpoint(run_dir / "checkpoints" / "last.pt",
                         checkpoint(model, optimizer, 0, rng, history, selection, identity, 0.0, previous_peak))
+    fit_progress("outer_task_weighting")(dict(query_events=query_events, weights=task_weights,
+        reduction="Query-event-proportional weighted sum; all mice once per outer step"))
     started = time.monotonic()
     def peak_memory():
         current = torch.cuda.max_memory_allocated(device) / 2**20 if device.type == "cuda" else 0.0
@@ -393,7 +403,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
             optimizer.zero_grad(set_to_none=True)
             losses, inner_reports = [], []
             for task_index, mouse in enumerate(config.targets):
-                # Accumulate every mouse's equally weighted gradient before one outer update.
+                # All tasks see the same frontend; event counts set their gradient coefficients.
                 episode = episodes[mouse]
                 fixed_seed = (None if config.inner_shuffle_seed is None else
                               config.inner_shuffle_seed + task_index)
@@ -401,15 +411,18 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 # outer step, so the meta objective is a deterministic function of the frontend.
                 task_rng = rng if fixed_seed is None else np.random.default_rng(fixed_seed)
                 batches = episode_batch(training[mouse], queries[mouse], episode, config, task_rng, device,
-                                        return_event_weights=config.algorithm == "pooled")
+                                        return_event_weights=True)
                 support, query = batches[:2]
                 if config.algorithm == "meta":
                     with inner_shuffle_rng(fixed_seed, device):
                         loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
-                            progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse))
+                            progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse),
+                            query_weights=batches[2][1])
                     fit.update(inner_shuffle_seed=fixed_seed)
                     fit.update(mouse=mouse, support_days=list(episode.support_days),
-                               query_days=list(episode.query_days), query_samples=len(query[1]))
+                               query_days=list(episode.query_days), query_samples=len(query[1]),
+                               query_events=query_events[mouse], outer_weight=task_weights[mouse])
+                    fit["query"].update(events=query_events[mouse], outer_weight=task_weights[mouse])
                     write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
                     inner_reports.append(fit)
                     fit_progress("query_task", step=step, task=task_index, mouse=mouse,
@@ -418,17 +431,20 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                     loss = pooled_objective(model, support, query, config, event_weights=batches[2])
                 if not torch.isfinite(loss):
                     raise FloatingPointError("Non-finite outer loss")
-                (loss / len(config.targets)).backward()
-                losses.append(float(loss.detach()))
+                (loss * task_weights[mouse]).backward()
+                losses.append(float(loss.detach()) * task_weights[mouse])
             grad_norm = torch.nn.utils.clip_grad_norm_(outer_parameters, config.gradient_clip, error_if_nonfinite=True)
             optimizer.step()
             row = dict(step=step, mice=list(config.targets), tasks=len(losses),
-                       outer_loss=float(np.mean(losses)), gradient_norm=float(grad_norm))
+                       query_events=query_events, outer_task_weights=task_weights,
+                       outer_loss=float(sum(losses)), gradient_norm=float(grad_norm))
             if inner_reports:
                 subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
-                aggregate = {key: float(np.mean([metrics[key] for metrics in subjects.values()]))
+                aggregate = {key: float(sum(task_weights[mouse] * metrics[key]
+                                           for mouse, metrics in subjects.items()))
                              for key in ["loss", "accuracy"]}
                 row["query"] = dict(split="query", role="query", days=list(config.query_validation_days), timing="before_outer_update",
+                                    aggregation="Eligible query-event weighted across mice",
                                     aggregate=aggregate, subjects=subjects)
                 fit_progress("query_step", step=step)(row["query"])
                 row["inner"] = dict(epochs_per_task=config.inner_epochs, support_crops=config.support_crops,

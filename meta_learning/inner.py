@@ -19,20 +19,24 @@ class ClassifierFit:
     report: dict
 
 
-def classifier_loss(classifier, parameters, buffers, features, labels, config, *, return_accuracy=False):
-    """Sample-weighted loss; evaluation never mutates classifier or BN state."""
+def classifier_loss(classifier, parameters, buffers, features, labels, config, *, return_accuracy=False,
+                    sample_weights=None):
+    """Optionally event-weighted loss; evaluation never mutates classifier or BN state."""
     total = features.new_zeros(())
     correct = features.new_zeros(())
     for start in range(0, len(labels), config.batch_size):
         stop = start + config.batch_size
         logits = functional_call(classifier, (parameters, buffers), (features[start:stop],), strict=True)
-        total = total + F.cross_entropy(logits, labels[start:stop], reduction="sum",
-                                       label_smoothing=config.label_smoothing)
+        losses = F.cross_entropy(logits, labels[start:stop], reduction="none",
+                                 label_smoothing=config.label_smoothing)
+        weights = 1 if sample_weights is None else sample_weights[start:stop]
+        total = total + (losses * weights).sum()
         if return_accuracy:
             predicted = (logits[:, 1] >= logits[:, 0]).long()
-            correct = correct + (predicted == labels[start:stop]).sum()
-    loss = total / len(labels)
-    return (loss, float(correct / len(labels))) if return_accuracy else loss
+            correct = correct + ((predicted == labels[start:stop]) * weights).sum()
+    denominator = len(labels) if sample_weights is None else sample_weights.sum()
+    loss = total / denominator
+    return (loss, float(correct / denominator)) if return_accuracy else loss
 
 
 def training_classifier(reference, config):

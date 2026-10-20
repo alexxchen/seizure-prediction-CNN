@@ -99,6 +99,26 @@ def event_sample_weights(split, indices, device):
     return torch.as_tensor(1.0 / counts.to_numpy(dtype=np.float32), device=device)
 
 
+def query_task_weights(queries, episodes):
+    """Weight fixed mouse tasks by independent eligible query events, before crops/caps."""
+    counts = {}
+    for mouse, episode in episodes.items():
+        query = queries[mouse]
+        rows = query.table.iloc[episode.query_indices]
+        if (query.split != "validation" or not rows.mouse.eq(mouse).all()
+                or not rows.day.isin(episode.query_days).all()):
+            raise ValueError("Outer weights require the task's query partition")
+        positives = rows[rows.label == 1]
+        count = len(positives.drop_duplicates(["mouse", "day", "event_index"]))
+        if not count:
+            raise ValueError(f"{mouse}: outer weighting requires positive query events")
+        counts[mouse] = count
+    total = sum(counts.values())
+    if not total:
+        raise ValueError("Outer weighting requires at least one query task")
+    return counts, {mouse: count / total for mouse, count in counts.items()}
+
+
 def episode_batch(support_split, query_split, episode, config, rng, device, *, return_event_weights=False):
     support = support_indices(support_split, episode.support_indices, config)
     support = balanced_indices(support_split.labels, support, config.support_per_class, rng)

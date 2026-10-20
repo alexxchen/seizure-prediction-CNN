@@ -8,7 +8,8 @@ from torch.nn import functional as F
 from meta_learning.inner import classifier_loss, fit_classifier
 
 
-def meta_objective(model, support, query, config, *, return_diagnostics=False, progress=None):
+def meta_objective(model, support, query, config, *, return_diagnostics=False, progress=None,
+                   query_weights=None):
     """Fit a private CNN for a fixed epoch budget, then differentiate query loss.
 
     Only the frontend is a meta-parameter. Every completed inner optimizer update is
@@ -20,7 +21,7 @@ def meta_objective(model, support, query, config, *, return_diagnostics=False, p
     evaluation = copy.deepcopy(model.cnn).eval()
     result = classifier_loss(evaluation, fit.parameters, fit.buffers,
                              model.frontend(query[0]), query[1], config,
-                             return_accuracy=return_diagnostics)
+                             return_accuracy=return_diagnostics, sample_weights=query_weights)
     if not return_diagnostics:
         return result
     loss, accuracy = result
