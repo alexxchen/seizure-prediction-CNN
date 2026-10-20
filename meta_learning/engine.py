@@ -74,30 +74,30 @@ def validation_roles(config):
     """Query days supply outer gradients; disjoint selection days (if any) pick checkpoints."""
     roles = [("query", "validation", config.query_validation_days)]
     if config.selection_validation_days is not None:
-        roles.append(("selection", "validation", config.selection_validation_days))
-    return roles + [("eval", "test", None)]
+        roles.append(("valid", "validation", config.selection_validation_days))
+    return roles + [("test", "test", None)]
 
 
 def selection_criterion(config):
     if config.selection_validation_days is None:
         return "Minimum mean query log loss; test metrics are reporting only"
-    return (f"Minimum mean log loss on validation Days {list(config.selection_validation_days)}, disjoint from "
+    return (f"Minimum mean log loss on valid Days {list(config.selection_validation_days)}, disjoint from "
             f"query Days {list(config.query_validation_days)}; test metrics are reporting only")
 
 
 def report_roles(report):
     """Role -> report; the root is the selection report (the query report without selection days)."""
-    roles = {report["role"]: report, "eval": report["eval"]}
+    roles = {report["role"]: report, "test": report["test"]}
     if "query" in report:
         roles["query"] = report["query"]
     return roles
 
 
 def validate(initial, store, config, device, step, run_dir, identity, *, fit_stage="per_mouse_fit"):
-    """Fit on support only; score query, selection, and held-out eval with the same classifier.
+    """Fit on support only; score query, valid, and held-out test with the same classifier.
 
     The root aggregate/subjects select checkpoints: selection days when configured,
-    otherwise the query days. The nested eval report is test-only inference.
+    otherwise the query days. The nested test report is test-only inference.
     """
     roles = validation_roles(config)
     subjects = {role: {} for role, _, _ in roles}
@@ -127,7 +127,8 @@ def validate(initial, store, config, device, step, run_dir, identity, *, fit_sta
             table = values.table.copy()
             table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
             predictions[mouse][role] = table
-            fit_progress(f"{fit_stage}_{role}", step=step, mouse=mouse)(
+            fit_progress(f"{fit_stage}_{role}", step=step, mouse=mouse,
+                         split=role, days=metrics["days"])(
                 {key: metrics[key] for key in ["samples", "loss", "accuracy", "auc", "sensitivity", "specificity"]})
         adapted[mouse] = dict(model=cpu_state(model), scale=scale, mouse=mouse,
                               training_fingerprint=training.fingerprint, **fingerprints,
@@ -136,11 +137,11 @@ def validate(initial, store, config, device, step, run_dir, identity, *, fit_sta
     for role, part, days in roles:
         aggregate = {key: float(np.mean([row[key] for row in subjects[role].values()]))
                      for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
-        reports[role] = dict(step=step, split=part, role=role, days=list(days or DAY_SPLITS[part]),
+        reports[role] = dict(step=step, split=role, role=role, source_split=part, days=list(days or DAY_SPLITS[part]),
                              aggregate=aggregate, subjects=subjects[role])
-    if "selection" in reports:
-        return dict(reports["selection"], query=reports["query"], eval=reports["eval"]), predictions, adapted
-    return dict(reports["query"], eval=reports["eval"]), predictions, adapted
+    if "valid" in reports:
+        return dict(reports["valid"], query=reports["query"], test=reports["test"]), predictions, adapted
+    return dict(reports["query"], test=reports["test"]), predictions, adapted
 
 
 def save_predictions(directory, predictions, metrics):
@@ -255,10 +256,10 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       training_fingerprints={mouse: split.fingerprint for mouse, split in training.items()},
                       query_fingerprints={mouse: split.fingerprint for mouse, split in queries.items()},
                       split_roles=dict(support="train Days 0-7",
-                                       query=f"validation Days {list(config.query_validation_days)}",
-                                       selection=(None if config.selection_validation_days is None else
-                                                  f"validation Days {list(config.selection_validation_days)}"),
-                                       eval="test Days 12/13"),
+                                       query=f"outer-training query Days {list(config.query_validation_days)}",
+                                       valid=(None if config.selection_validation_days is None else
+                                                  f"checkpoint-selection valid Days {list(config.selection_validation_days)}"),
+                                       test="held-out test Days 12/13"),
                       selection_criterion=("Single fixed log-STFT fit; no checkpoint search"
                           if config.algorithm == "log_stft" else selection_criterion(config)),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
@@ -279,7 +280,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                              "Every configured mouse exactly once per outer step"),
                                          mouse_order=list(config.targets),
                                          tasks_per_step=0 if config.algorithm == "log_stft" else len(config.targets),
-                                         episodes="One fixed train-support/validation-query task per mouse", gradient_reduction="Mean per mouse"),
+                                         episodes="One fixed support/query task per mouse", gradient_reduction="Mean per mouse"),
                       pooled_example_weighting="Mean of per-event losses across support and query; every event has equal weight",
                       normalization="Identity (scale=1) before the neural frontend; no fitted statistics",
                       batchnorm=("Support batch statistics during training; query/test use exact support statistics of the final "
@@ -306,6 +307,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                      + (f"over {config.support_crops} random crops per event and class (meta inner fits "
                                         "from the episode RNG; per-mouse fits from a fixed per-mouse seed)"
                                         if crops_support(config) else "over fixed support windows")
+                                     + f"; L2 toward the unlearned reference weights, coefficient {config.inner_weight_decay}"
                                      + " in both meta inner and per-mouse fits"
                                      if config.algorithm in {"meta", "log_stft"} else "None"),
                       outer_updates={"meta": "Shared frontend only",
@@ -411,7 +413,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                     write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
                     inner_reports.append(fit)
                     fit_progress("query_task", step=step, task=task_index, mouse=mouse,
-                                 query_split="validation", query_days=list(episode.query_days))(fit["query"])
+                                 query_split="query", query_days=list(episode.query_days))(fit["query"])
                 else:
                     loss = pooled_objective(model, support, query, config, event_weights=batches[2])
                 if not torch.isfinite(loss):
@@ -426,7 +428,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
                 aggregate = {key: float(np.mean([metrics[key] for metrics in subjects.values()]))
                              for key in ["loss", "accuracy"]}
-                row["query"] = dict(split="validation", role="query", timing="before_outer_update",
+                row["query"] = dict(split="query", role="query", days=list(config.query_validation_days), timing="before_outer_update",
                                     aggregate=aggregate, subjects=subjects)
                 fit_progress("query_step", step=step)(row["query"])
                 row["inner"] = dict(epochs_per_task=config.inner_epochs, support_crops=config.support_crops,
@@ -439,14 +441,14 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 report, predictions, adapted = validate(model, store, config, device, step, run_dir, identity)
                 roles = report_roles(report)
                 row["query_refit"] = roles["query"]["aggregate"]
-                if "selection" in roles:
-                    row["selection"] = roles["selection"]["aggregate"]
-                row["eval"] = report["eval"]["aggregate"]
+                if "valid" in roles:
+                    row["valid"] = roles["valid"]["aggregate"]
+                row["test"] = report["test"]["aggregate"]
                 row["frontend"] = model.frontend.describe()["state"]
                 score = report["aggregate"]
                 previous = selection["aggregate"] if selection else None
                 improved = query_improves(score, previous)
-                fit_progress("query_eval_step", step=step)(
+                fit_progress("evaluation_step", step=step)(
                     {role: value["aggregate"] for role, value in roles.items()})
                 if improved:
                     directory = run_dir / "selected" / f"step-{step:06d}"
@@ -462,7 +464,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                     identity=identity, step=step))
                 for role, value in roles.items():
                     write_json(run_dir / role / f"step-{step:06d}.json",
-                               {k: v for k, v in value.items() if k not in {"eval", "query"}})
+                               {k: v for k, v in value.items() if k not in {"test", "query"}})
             history.append(row)
             if step % config.checkpoint_every == 0 or "query_refit" in row:
                 save_checkpoint(run_dir / "checkpoints" / "last.pt",
@@ -484,8 +486,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
 
 
 def evaluate_run(store, run_dir, device, split="test"):
-    if split not in {"validation", "test"}:
-        raise ValueError("Evaluation split must be validation or test")
+    if split not in {"query", "valid", "test", "validation"}:
+        raise ValueError("Evaluation split must be query, valid, test, or legacy validation")
     run_dir = Path(run_dir)
     metadata = json.loads((run_dir / "run.json").read_text())
     if metadata["provenance"]["source_sha256"] != source_hashes():
@@ -497,8 +499,11 @@ def evaluate_run(store, run_dir, device, split="test"):
         raise ValueError("Selection belongs to another run")
     config = Config.from_dict(metadata["provenance"]["config"])
     seed_everything(config.seed)
-    roles = ([entry for entry in validation_roles(config) if entry[1] == "validation"]
-             if split == "validation" else [("eval", "test", None)])
+    roles = [entry for entry in validation_roles(config)
+             if (entry[1] == "validation" if split == "validation" else entry[0] == split)]
+    if not roles:
+        raise ValueError("No independent valid days configured; checkpoint selection uses query")
+    source_split = "test" if split == "test" else "validation"
     subjects = {role: {} for role, _, _ in roles}
     for mouse in config.targets:
         record = selection["adapted_models"][mouse]
@@ -512,8 +517,8 @@ def evaluate_run(store, run_dir, device, split="test"):
         if config.algorithm == "log_stft":
             model.use_frontend(LogSTFTFrontend().to(device), config.seed)
         model.load_state_dict(state["model"])
-        values = store.load(mouse, split)
-        if values.fingerprint != state[f"{split}_fingerprint"]:
+        values = store.load(mouse, source_split)
+        if values.fingerprint != state[f"{source_split}_fingerprint"]:
             raise ValueError(f"{split} sample provenance changed")
         for role, _, days in roles:
             scored = values.subset_days(days) if days is not None else values
@@ -526,8 +531,8 @@ def evaluate_run(store, run_dir, device, split="test"):
                            classifier_fit=state["classifier_fit"],
                            days=sorted(int(day) for day in scored.table.day.unique()))
             subjects[role][mouse] = metrics
-            directory = run_dir / "evaluation" / split
-            destination = directory / role / mouse if split == "validation" else directory / mouse
+            directory = run_dir / "evaluation" / role
+            destination = directory / mouse
             destination.mkdir(parents=True, exist_ok=True)
             table = scored.table.copy()
             table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
@@ -536,19 +541,16 @@ def evaluate_run(store, run_dir, device, split="test"):
     reports = {}
     for role, _, days in roles:
         rows = subjects[role]
-        reports[role] = dict(split=split, role=role, days=list(days or DAY_SPLITS[split]),
+        reports[role] = dict(split=role, role=role, source_split=source_split, days=list(days or DAY_SPLITS[source_split]),
             selected_step=selection["step"], identity=metadata["identity"],
             aggregate={key: float(np.mean([row[key] for row in rows.values()]))
                        for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]},
             subjects=rows, evaluation_protocol_sha256=digest(
                 {mouse: row["evaluation_protocol_sha256"] for mouse, row in rows.items()}))
-        if split == "validation":
-            write_json(run_dir / "evaluation" / split / role / "result.json", reports[role])
+        write_json(run_dir / "evaluation" / role / "result.json", reports[role])
     if split == "validation":
-        report = dict(reports["query"])
-        if "selection" in reports:
-            report["selection"] = reports["selection"]
+        report = dict(reports.get("valid", reports["query"]), query=reports["query"])
+        write_json(run_dir / "evaluation" / split / "result.json", report)
     else:
-        report = reports["eval"]
-    write_json(run_dir / "evaluation" / split / "result.json", report)
+        report = reports[split]
     return report

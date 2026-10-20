@@ -21,6 +21,7 @@ class Config:
     batchnorm_recalibration: bool = True
     inner_optimizer: str = "sgd"
     inner_lr: float = 0.01
+    inner_weight_decay: float = 0.0
     classifier_dropout: float = 0.0
     outer_lr: float = 0.001
     outer_weight_decay: float = 0.0
@@ -92,6 +93,9 @@ class Config:
             value = getattr(self, key)
             if value is not None and (type(value) is not int or value < 1):
                 raise ValueError(f"{key} must be null (all samples) or a positive integer")
+        if (type(self.inner_weight_decay) not in {float, int} or not math.isfinite(self.inner_weight_decay)
+                or self.inner_weight_decay < 0):
+            raise ValueError("inner_weight_decay must be finite and nonnegative")
         for key in ["inner_lr", "outer_lr", "gradient_clip"]:
             value = getattr(self, key)
             if type(value) not in {float, int} or not math.isfinite(value) or value <= 0:

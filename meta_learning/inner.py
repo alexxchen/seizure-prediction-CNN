@@ -57,7 +57,7 @@ class _SupportForward(torch.nn.Module):
         return logits, tuple(self.classifier.buffers())
 
 
-def update_segment(training, names, buffers, features, labels, state, batches, config, differentiable):
+def update_segment(training, names, buffers, features, labels, state, batches, config, differentiable, anchor):
     count = len(names)
     parameters = state[:count]
     # Functional BatchNorm replaces these values out of place on every support
@@ -75,6 +75,10 @@ def update_segment(training, names, buffers, features, labels, state, batches, c
         norm = torch.linalg.vector_norm(torch.stack([gradient.norm() for gradient in gradients]))
         clip = (config.gradient_clip / (norm + 1e-6)).clamp(max=1.0)
         gradients = tuple(gradient * clip for gradient in gradients)
+        if config.inner_weight_decay:
+            # L2 pull toward the fixed unlearned reference, added after loss-gradient clipping.
+            gradients = tuple(gradient + config.inner_weight_decay * (parameter - origin)
+                              for gradient, parameter, origin in zip(gradients, parameters, anchor))
         parameters = tuple(parameter - config.inner_lr * gradient
                            for parameter, gradient in zip(parameters, gradients))
         if not differentiable:
@@ -89,6 +93,7 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
     names = tuple(name for name, _ in reference.named_parameters())
     weights = tuple(parameter.detach().clone().requires_grad_(True)
                     for parameter in reference.parameters())
+    anchor = tuple(parameter.detach().clone() for parameter in reference.parameters())
     buffers = {name: value.detach().clone() for name, value in reference.named_buffers()}
     if not differentiable:
         features = features.detach()
@@ -120,7 +125,7 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
                     cuda_rng=torch.cuda.get_rng_state(features.device) if features.is_cuda else None))
             state = update_segment(training, names, buffers, features, labels,
                                    (*weights, *buffers.values()),
-                                   selected, config, differentiable)
+                                   selected, config, differentiable, anchor)
             weights = state[:len(names)]
             buffers = dict(zip(buffers, state[len(names):]))
             steps += len(selected)
@@ -173,6 +178,8 @@ class _ReplayClassifierFit(torch.autograd.Function):
         boundaries = tuple(value for segment in ctx.segments for value in segment.pop("state"))
         ctx.save_for_backward(features, labels, *boundaries)
         ctx.training = training_classifier(reference, config)
+        # The L2 anchor is the detached unlearned reference; it carries no hypergradient.
+        ctx.anchor = tuple(parameter.detach().clone() for parameter in reference.parameters())
         ctx.names = tuple(fit.parameters)
         ctx.buffer_names, ctx.config = tuple(fit.buffers), config
         report.update(fit.report)
@@ -206,7 +213,8 @@ class _ReplayClassifierFit(torch.autograd.Function):
                 inputs = features.detach().requires_grad_(True)
                 batches = tuple(indices.to(device) for indices in segment["batches"])
                 final = update_segment(ctx.training, ctx.names, ctx.buffer_names, inputs, labels,
-                                       initial, batches, ctx.config, True)
+                                       initial, batches, ctx.config, True,
+                                       tuple(value.to(device) for value in ctx.anchor))
                 gradients = torch.autograd.grad(final, (inputs, *initial), grad_outputs=adjoints,
                                                 allow_unused=True)
                 if gradients[0] is not None:

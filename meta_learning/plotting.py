@@ -10,7 +10,8 @@ def metric_series(history, key, metric=None):
     """Keep the recorded step coordinates, including sparse refit evaluations."""
     points = []
     for row in history:
-        value = row.get(key)
+        legacy_key = {"valid": "selection", "test": "eval"}.get(key, key)
+        value = row.get(key, row.get(legacy_key))
         if metric is not None:
             value = value.get(metric) if isinstance(value, dict) else None
         if isinstance(value, (int, float)) and math.isfinite(value):
@@ -70,8 +71,8 @@ def convergence_figure(history, selection, title, split_days=None):
     for key, name, color, marker in [
         ("support_refit", "Support", "#7b4eaa", "s"),
         ("query_refit", "Query", "#3564a5", "o"),
-        ("selection", "Val", "#d18117", "^"),
-        ("eval", "Test", "#338663", "D"),
+        ("valid", "Valid", "#d18117", "^"),
+        ("test", "Test", "#338663", "D"),
     ]:
         steps, values = metric_series(history, key, "accuracy")
         if steps:
@@ -113,9 +114,9 @@ def save_convergence_plots(run_dir):
     query_report = selection.get("query", selection if selection.get("role") == "query" else {})
     split_days = dict(Support=list(range(8)),
                       Query=config.get("query_validation_days", query_report.get("days")),
-                      Val=config.get("selection_validation_days", selection.get("days")
-                                     if selection.get("role") == "selection" else None),
-                      Test=selection.get("eval", {}).get("days", [12, 13]))
+                      Valid=config.get("selection_validation_days", selection.get("days")
+                                     if selection.get("role") in {"valid", "selection"} else None),
+                      Test=selection.get("test", selection.get("eval", {})).get("days", [12, 13]))
     rows = accuracy_history(run_dir, history, selection)
     title = ", ".join(sorted(selection.get("subjects", {}))) or run_dir.name
     figure = convergence_figure(rows, selection, title, split_days)

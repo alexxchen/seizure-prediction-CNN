@@ -1,4 +1,4 @@
-"""Fixed per-mouse tasks: training support and validation query; test is inference only."""
+"""Fixed per-mouse tasks: training support and outer-training query; test is inference only."""
 
 from dataclasses import dataclass
 
@@ -17,7 +17,7 @@ class Episode:
     query_days: tuple
 
     def describe(self):
-        return dict(mouse=self.mouse, support_split="train", query_split="validation",
+        return dict(mouse=self.mouse, support_split="support", query_split="query",
                     support_days=list(self.support_days), query_days=list(self.query_days),
                     support_samples=len(self.support_indices), query_samples=len(self.query_indices))
 

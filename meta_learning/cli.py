@@ -32,7 +32,7 @@ def train_main():
     parser.add_argument("--steps", type=int, help="Override the finite outer-step budget")
     parser.add_argument("--targets", type=parse_targets)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--plan-only", action="store_true", help="Audit fixed train-support/validation-query tasks without reading waveforms or training")
+    parser.add_argument("--plan-only", action="store_true", help="Audit fixed support/query tasks without reading waveforms or training")
     args = parser.parse_args()
     config = Config.load(args.config).to_dict()
     for name, value in [("algorithm", args.algorithm), ("outer_steps", args.steps), ("targets", args.targets)]:
@@ -50,10 +50,10 @@ def train_main():
                       for part, table in tables.items()}
             query = splits["validation"].subset_days(config.query_validation_days)
             tasks[mouse] = [dict(split_episode(splits["train"], query).describe(),
-                                 selection_days=(None if config.selection_validation_days is None else
+                                 valid_days=(None if config.selection_validation_days is None else
                                                  list(config.selection_validation_days)),
-                                 eval_split="test", eval_days=sorted(splits["test"].table.day.unique().tolist()),
-                                 eval_samples=len(splits["test"].labels))]
+                                 test_split="test", test_days=sorted(splits["test"].table.day.unique().tolist()),
+                                 test_samples=len(splits["test"].labels))]
         write_json(args.run_dir / "episodes.json", tasks)
         print(json.dumps(dict(training=False, episodes={mouse: len(rows) for mouse, rows in tasks.items()})))
         return
@@ -67,10 +67,10 @@ def train_main():
 
 
 def evaluate_main():
-    parser = argparse.ArgumentParser(description="Replay query/selection or test using selected checkpoints; no fitting")
+    parser = argparse.ArgumentParser(description="Replay query, valid, or test using selected checkpoints; no fitting")
     data_arguments(parser)
-    parser.add_argument("--split", choices=["validation", "test"], default="test",
-                        help="test: held-out eval (default); validation: separate query and selection replay")
+    parser.add_argument("--split", choices=["query", "valid", "test", "validation"], default="test",
+                        help="query: outer-training days; valid: checkpoint-selection days; test: held-out days (default); validation: legacy alias replaying query and valid separately")
     args = parser.parse_args()
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, args.run_dir / "data")
     result = evaluate_run(store, args.run_dir, resolve_device(args.device), args.split)
