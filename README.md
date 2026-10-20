@@ -183,6 +183,42 @@ python scripts/transfer_frontend.py --source-run results/waveform-conv-meta \
 
 This finite job uses the source run's verified saved implementation and selected frontend, trains one fresh CNN per target on Days 0-7, and reports query Days 8/11 and test Days 12/13. The frontend remains frozen; target query/test metrics never select weights. The complete epoch budget, support crop policy, optimizer, dropout, and batch sizes come from the source run's configuration. Per-mouse fit seeds are `seed + 10000 + target position` in the supplied target order. Outputs include checkpoints, predictions, source snapshots, and `report.json`/`report.md` in a new directory. Data/cache options match the visualization script; existing output directories are rejected.
 
+### Frozen frontend with Adam and validation epoch selection
+
+For the separately requested final-fitting experiment, use the selected frontend from
+`waveform-conv-meta-event-weighted`, freeze it, and fit one fresh CNN for each of the seven mice:
+
+```bash
+python scripts/fit_frontend_adam.py \
+  --source-run results/waveform-conv-meta-event-weighted \
+  --run-dir results/adam-personalization/all-mice-100epochs \
+  --epochs 100 --lr 0.001 --device cuda
+```
+
+This standalone job explicitly overrides the source experiment's final-fitting optimizer
+and epoch budget with Adam and 100 complete epochs. Each mouse's minimum fixed-window
+Days 8/11 log loss selects its CNN epoch. Days 0-7 alone supply optimizer updates and
+BatchNorm calibration. Calibration runs on an evaluation copy each epoch, preserving the
+training CNN's BatchNorm EMA and Adam moments. Test Days 12/13 are scored once per mouse
+after epoch selection. Days 8/11 already supervised the source frontend, so this validation
+score measures reuse of those days for CNN selection; test measures held-out generalization.
+
+The script verifies and imports the source run's archived implementation and package versions,
+checks the selected frontend against the saved adapted checkpoints, and transfers frontend
+weights only. Support crops, label smoothing, gradient clipping, batch sizes, and dropout
+follow the source configuration. Support crops are drawn once from a reproducible per-mouse
+seed and reused through all epochs, matching the source personalization policy. Training
+completes all 100 epochs, then restores the validation-selected CNN. The meta inner solver,
+`configs/meta.json`, and historical runs retain their original settings.
+
+Use an environment matching `requirements.txt`. Data/cache/prepared options match the feature
+visualization script. Start in a new output directory; `--resume` restores compatible Adam
+moments, CNN parameters, BatchNorm buffers, selected state, history, and shuffle RNG from
+the most recent completed epoch. Each mouse has `last.pt`, a selected `checkpoint.pt`,
+validation/test predictions and metrics, `history.json`, and `convergence.png`. The run
+retains the frontend, source snapshot, configuration, source fingerprints, runtime, and
+aggregate `report.json`/`report.md`.
+
 ### Short integration check
 
 ```bash
