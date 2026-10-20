@@ -19,9 +19,10 @@ from meta_learning.waveform import WAVEFORM_CONFIG
 FILTERBANK_CONFIG = dict(sample_hz=256, frame_length=256, hop_length=128, frequency_hz=[1, 40],
     initialization="Cosine-window (scipy 'cosine', symmetric) cos/sin pairs: an unnormalized 256-point DFT",
     magnitude="sqrt(real^2 + imag^2 + 1e-6)", compression="log1p / ln(10)", learnable=True)
-FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672, input_scale=0.01,
-    input_scale_note="Fixed unit conversion (microvolts x 0.01); not fitted to data",
-    stem="Conv1d(1->16, k8, s4)", stages=[[16, 4], [32, 4], [48, 4], [64, 2], [64, 1]], norm_groups=8,
+FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672, input_scaling="none",
+    stem="Conv1d(1->16, k8, s4) -> GroupNorm(8, 16, eps=1e-5, affine=True)",
+    stem_normalization="Per sample, over channels within each group and time; before the first residual fork",
+    stages=[[16, 4], [32, 4], [48, 4], [64, 2], [64, 1]], norm_groups=8,
     stage_note="Each [channels, stride]: one residual block at that width, then a strided Conv1d to the next "
                "width (28672 -> 7168 -> 1792 -> 448 -> 112 -> 56); the last stage adds a dilation-2 block",
     block="Pre-activation: GroupNorm(8) -> GELU -> Conv1d k3 (dilation d) -> GroupNorm(8) -> GELU -> Conv1d k3 "
@@ -29,7 +30,7 @@ FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672, in
     head="GroupNorm(8) -> GELU -> Conv1d(64 -> output_channels, k1); output is a (channels, time) sequence",
     output_channels=64, time_bins=56,
     initialization="Seeded PyTorch defaults (random); zero-initialized last conv in each residual block; "
-                   "no alignment with log-STFT")
+                   "stem GroupNorm weight=1, bias=0; no data calibration or alignment with log-STFT")
 
 
 def filterbank_reference():
@@ -105,7 +106,8 @@ class WaveformFrontend(nn.Module):
         with torch.random.fork_rng(devices=[]):
             generator = torch.Generator(device="cpu").manual_seed(seed)
             torch.set_rng_state(generator.get_state())
-            layers = [nn.Conv1d(1, c["stages"][0][0], 8, stride=4, padding=2)]
+            layers = [nn.Conv1d(1, c["stages"][0][0], 8, stride=4, padding=2),
+                      nn.GroupNorm(c["norm_groups"], c["stages"][0][0])]
             for index, (channels, stride) in enumerate(c["stages"]):
                 layers.append(ResidualBlock1d(channels))
                 if index + 1 < len(c["stages"]):
@@ -130,7 +132,7 @@ class WaveformFrontend(nn.Module):
 
     def _forward_batch(self, waveform):
         c = FRONTEND_CONFIG
-        features = self.head(self.body(waveform.unsqueeze(1) * c["input_scale"]))
+        features = self.head(self.body(waveform.unsqueeze(1)))
         if features.shape[2] != c["time_bins"]:
             raise ValueError("Convolution strides do not produce the configured time bins")
         return features
