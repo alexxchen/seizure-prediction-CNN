@@ -54,20 +54,20 @@ class SeizureCNN(nn.Module):
             raise ValueError("Expected input shape (channels, time)")
         channels, time_bins = self.input_shape
         self.normal1 = AxisBatchNorm(channels, axis=1)
-        self.conv1 = nn.Conv1d(channels, 16, 5, stride=2, padding=2)
+        self.conv1 = nn.Conv1d(channels, 32, 5, stride=2, padding=2)
         self.pool1 = nn.MaxPool1d(2, ceil_mode=True)
-        self.normal2 = AxisBatchNorm(16, axis=1)
-        self.conv2 = nn.Conv1d(16, 32, 3, padding=1)
+        self.normal2 = AxisBatchNorm(32, axis=1)
+        self.conv2 = nn.Conv1d(32, 32, 3, padding=1)
         self.pool2 = nn.MaxPool1d(2, ceil_mode=True)
         self.normal3 = AxisBatchNorm(32, axis=1)
-        self.conv3 = nn.Conv1d(32, 64, 3, padding=1)
+        self.conv3 = nn.Conv1d(32, 32, 3, padding=1)
         self.pool3 = nn.MaxPool1d(2, ceil_mode=True)
         self.drop1 = nn.Dropout(0.5)
         self.drop2 = nn.Dropout(0.5)
         time_output = (time_bins - 1) // 2 + 1
         for _ in range(3):
             time_output = -(-time_output // 2)
-        self.dens1 = nn.Linear(64 * time_output, 128)
+        self.dens1 = nn.Linear(32 * time_output, 128)
         self.dens2 = nn.Linear(128, nb_classes)
         for layer in (self.conv1, self.conv2, self.conv3, self.dens1, self.dens2):
             nn.init.xavier_uniform_(layer.weight)

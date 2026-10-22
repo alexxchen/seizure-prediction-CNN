@@ -28,18 +28,25 @@ Inside the frontend, each window is divided by its own RMS. Peak-scaled arithmet
 ```text
 waveform / window RMS                        (28,672 samples)
 -> Conv1d(1->16, k8, s4)                      7,168
--> ResBlock(16) -> Conv1d(16->32, k4, s4)      1,792
--> ResBlock(32) -> Conv1d(32->48, k4, s4)      448
--> ResBlock(48) -> Conv1d(48->64, k4, s4)      112
--> ResBlock(64) -> Conv1d(64->64, k2, s2)      56
+-> ResBlock(16) -> Conv1d(16->32, k2, s2)      3,584
+-> ResBlock(32) -> Conv1d(32->48, k2, s2)      1,792
+-> ResBlock(48) -> Conv1d(48->64, k7, s7)      256
+-> ResBlock(64) -> Conv1d(64->64, k1, s1)      256
 -> ResBlock(64) -> ResBlock(64, dilation 2)
 -> GroupNorm(8) -> GELU -> Conv1d(64->64, k1)
--> 64 channels x 56 time bins
+-> 64 channels x 256 time bins
 ```
 
-Each pre-activation residual block uses GroupNorm/GELU and two k3 convolutions; its final convolution is zero-initialized. The residual stream carries the RMS-normalized waveform. The frontend has 130,272 parameters, no BatchNorm or dropout, and features depend only on their own window. Seeded frontend and CNN initialization preserve caller CPU/CUDA RNG streams. `frontend_batch_size` controls window chunks independently of CNN `batch_size`.
+Each pre-activation residual block uses GroupNorm/GELU and two k3 convolutions; its final convolution is zero-initialized. The residual stream carries the RMS-normalized waveform. The frontend has 131,296 parameters, no BatchNorm or dropout, and features depend only on their own window. Seeded frontend and CNN initialization preserve caller CPU/CUDA RNG streams. `frontend_batch_size` controls window chunks independently of CNN `batch_size`.
 
-The task CNN convolves time, mixing feature channels directly: AxisBatchNorm -> Conv1d(64->16, k5, s2) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(16->32, k3) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->64, k3) -> ReLU -> max-pool 2 -> flatten (256) -> dropout -> Linear(256->128) -> sigmoid -> dropout -> Linear(128->2). `classifier_dropout` defaults to zero. Inference uses softmax with a positive threshold of 0.5.
+The task CNN convolves time, mixing feature channels directly: AxisBatchNorm -> Conv1d(64->32, k5, s2) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->32, k3) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->32, k3) -> ReLU -> max-pool 2 -> flatten (512) -> dropout -> Linear(512->128) -> sigmoid -> dropout -> Linear(128->2). The CNN derives its dense input size from the frontend shape and has 82,658 parameters. `classifier_dropout` defaults to zero. Inference uses softmax with a positive threshold of 0.5.
+
+The 64 x 256 interface is produced by learned convolution strides with a total
+waveform reduction of 112; there is no interpolation or fixed pooling at the
+interface. All three CNN blocks emit 32 channels, with a 512-feature dense input.
+This reduces the CNN from 177,090 to 82,658 parameters relative to the
+64/64/64 classifier, while preserving the frontend and its 64 x 256 output.
+Use a new run directory.
 
 ## Meta-training
 

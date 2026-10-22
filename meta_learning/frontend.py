@@ -15,13 +15,13 @@ from meta_learning.waveform import WAVEFORM_CONFIG
 FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672,
     input_normalization="Per-window RMS after existing waveform mean removal; no fitted statistics",
     rms_numerics="Peak-scaled RMS computation; dtype-tiny floor and zero output for silence",
-    stem="Conv1d(1->16, k8, s4)", stages=[[16, 4], [32, 4], [48, 4], [64, 2], [64, 1]], norm_groups=8,
+    stem="Conv1d(1->16, k8, s4)", stages=[[16, 2], [32, 2], [48, 7], [64, 1], [64, 1]], norm_groups=8,
     stage_note="Each [channels, stride]: one residual block at that width, then a strided Conv1d to the next "
-               "width (28672 -> 7168 -> 1792 -> 448 -> 112 -> 56); the last stage adds a dilation-2 block",
+               "width (28672 -> 7168 -> 3584 -> 1792 -> 256 -> 256); the last stage adds a dilation-2 block",
     block="Pre-activation: GroupNorm(8) -> GELU -> Conv1d k3 (dilation d) -> GroupNorm(8) -> GELU -> Conv1d k3 "
           "(zero-initialized), added to the residual stream",
     head="GroupNorm(8) -> GELU -> Conv1d(64 -> output_channels, k1); output is a (channels, time) sequence",
-    output_channels=64, time_bins=56,
+    output_channels=64, time_bins=256,
     initialization="Seeded PyTorch defaults (random); zero-initialized last conv in each residual block")
 
 

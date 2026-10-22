@@ -194,7 +194,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       waveform_config=WAVEFORM_CONFIG,
                       frontend_config=dict(FRONTEND_CONFIG, checkpoint_batch_size=config.frontend_batch_size),
                       day_splits=DAY_SPLITS, cnn_input_shape=list(WaveformFrontend.output_shape),
-                      cnn="1-D CNN: three Conv1d/AxisBatchNorm/max-pool stages (16, 32, 64), flatten, dense 128, 2 logits",
+                      cnn="1-D CNN: three Conv1d/AxisBatchNorm/max-pool stages (32, 32, 32), flatten, dense 128, 2 logits",
                       task_schedule=dict(mice="Every configured mouse exactly once per outer step",
                                          mouse_order=list(config.targets),
                                          tasks_per_step=len(config.targets),
