@@ -19,8 +19,9 @@ from meta_learning.waveform import WAVEFORM_CONFIG
 FILTERBANK_CONFIG = dict(sample_hz=256, frame_length=256, hop_length=128, frequency_hz=[1, 40],
     initialization="Cosine-window (scipy 'cosine', symmetric) cos/sin pairs: an unnormalized 256-point DFT",
     magnitude="sqrt(real^2 + imag^2 + 1e-6)", compression="log1p / ln(10)", learnable=True)
-FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672, input_scale=0.01,
-    input_scale_note="Fixed unit conversion (microvolts x 0.01); not fitted to data",
+FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672,
+    input_normalization="Per-window RMS after existing waveform mean removal; no fitted statistics",
+    rms_numerics="Peak-scaled RMS computation; dtype-tiny floor and zero output for silence",
     stem="Conv1d(1->16, k8, s4)", stages=[[16, 4], [32, 4], [48, 4], [64, 2], [64, 1]], norm_groups=8,
     stage_note="Each [channels, stride]: one residual block at that width, then a strided Conv1d to the next "
                "width (28672 -> 7168 -> 1792 -> 448 -> 112 -> 56); the last stage adds a dilation-2 block",
@@ -30,6 +31,18 @@ FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672, in
     output_channels=64, time_bins=56,
     initialization="Seeded PyTorch defaults (random); zero-initialized last conv in each residual block; "
                    "no alignment with log-STFT")
+
+
+def rms_normalize_waveform(waveform):
+    """Return unit-RMS waveforms using only each centered window's own samples."""
+    tiny = torch.finfo(waveform.dtype).tiny
+    magnitude = waveform.detach().abs().amax(dim=1, keepdim=True)
+    peak = magnitude.clamp_min(tiny)
+    # Peak scaling avoids overflow/underflow when recording units differ.
+    relative = waveform / peak
+    relative_rms = relative.square().mean(dim=1, keepdim=True).clamp_min(tiny).sqrt()
+    rms = (peak * relative_rms).clamp_min(tiny)
+    return torch.where(magnitude > 0, waveform / rms, torch.zeros_like(waveform))
 
 
 def filterbank_reference():
@@ -130,7 +143,7 @@ class WaveformFrontend(nn.Module):
 
     def _forward_batch(self, waveform):
         c = FRONTEND_CONFIG
-        features = self.head(self.body(waveform.unsqueeze(1) * c["input_scale"]))
+        features = self.head(self.body(rms_normalize_waveform(waveform).unsqueeze(1)))
         if features.shape[2] != c["time_bins"]:
             raise ValueError("Convolution strides do not produce the configured time bins")
         return features
