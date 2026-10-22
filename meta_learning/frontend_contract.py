@@ -9,7 +9,7 @@ from torch.utils.checkpoint import checkpoint
 from meta_learning.frontend import FRONTEND_CONFIG, WaveformFrontend
 
 INPUT_SAMPLES = 28672
-CNN_INPUT_SHAPE = (64, 56)
+CNN_INPUT_SHAPE = (64, 256)
 
 
 class Frontend(nn.Module):

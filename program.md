@@ -28,7 +28,7 @@ Honor that count and stop requests. Never start an unbounded experiment loop.
 
 All frontend internals are open: convolutional or other differentiable
 architectures, width/depth, receptive fields, spectral transforms, nonlinearities,
-sample-local normalization, and random initialization. The initial 130,272-parameter
+sample-local normalization, and random initialization. The initial 131,296-parameter
 RMS/GroupNorm ResNet is a baseline, not the allowed architecture family.
 
 Keep the public candidate interface:
@@ -41,7 +41,7 @@ class WaveformFrontend(torch.nn.Module):
         ...  # CPU initialization; reproducible from seed; no external weights
 
     def forward(self, waveform):
-        ...  # (N, 28672) -> finite (N, 64, 56)
+        ...  # (N, 28672) -> finite (N, 64, 256)
 ```
 
 `FRONTEND_CONFIG` must be JSON serializable and accurately describe the candidate.
@@ -57,7 +57,8 @@ finite for silent windows, and differentiable through the fixed inner fit. Do no
 detach learned operations, read files/labels/recording metadata, import training or
 evaluation code, use cross-sample normalization, mutate persistent statistics, or
 load pretrained weights. The fixed CNN always consumes exactly 64 feature
-channels and 56 time bins; internal representations may differ.
+channels and 256 time bins. Its three convolution blocks emit 32 channels;
+internal frontend representations may differ.
 
 ## Fixed controls and objective
 
