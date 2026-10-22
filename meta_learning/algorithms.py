@@ -1,9 +1,6 @@
-"""Frontend-only bilevel learning and the pooled representation control."""
+"""Frontend-only bilevel meta-learning."""
 
 import copy
-
-import torch
-from torch.nn import functional as F
 
 from meta_learning.inner import classifier_loss, fit_classifier
 
@@ -27,16 +24,3 @@ def meta_objective(model, support, query, config, *, return_diagnostics=False, p
     loss, accuracy = result
     fit.report["query"] = dict(loss=float(loss.detach()), accuracy=accuracy, samples=len(query[1]))
     return loss, fit.report
-
-
-def pooled_objective(model, support, query, config, *, event_weights):
-    """Use the same examples, averaging their losses equally across represented events."""
-    model.train()
-    for layer in model.cnn.modules():
-        if isinstance(layer, torch.nn.Dropout):
-            layer.p = config.classifier_dropout
-    inputs = torch.cat([support[0], query[0]])
-    labels = torch.cat([support[1], query[1]])
-    losses = F.cross_entropy(model(inputs), labels, label_smoothing=config.label_smoothing, reduction="none")
-    weights = torch.cat(event_weights)
-    return (losses * weights).sum() / weights.sum()

@@ -10,8 +10,7 @@ def metric_series(history, key, metric=None):
     """Keep the recorded step coordinates, including sparse refit evaluations."""
     points = []
     for row in history:
-        legacy_key = {"valid": "selection", "test": "eval"}.get(key, key)
-        value = row.get(key, row.get(legacy_key))
+        value = row.get(key)
         if metric is not None:
             value = value.get(metric) if isinstance(value, dict) else None
         if isinstance(value, (int, float)) and math.isfinite(value):
@@ -30,12 +29,12 @@ def accuracy_history(run_dir, history, selection):
         row = dict(original)
         report_path = Path(run_dir) / "query" / f"step-{row['step']:06d}.json"
         report = json.loads(report_path.read_text()) if report_path.exists() else (
-            selection if selection.get("step") == row["step"] else {})
+            selection if selection["step"] == row["step"] else {})
         accuracies = []
         subjects = report.get("subjects", {})
         for metrics in subjects.values():
             fit = metrics.get("classifier_fit", {})
-            value = fit.get("calibrated_support_accuracy", fit.get("last_support_accuracy"))
+            value = fit["calibrated_support_accuracy"] if "calibrated_support_accuracy" in fit else fit["last_support_accuracy"]
             if not isinstance(value, (int, float)) or not math.isfinite(value):
                 break
             accuracies.append(value)
@@ -95,9 +94,6 @@ def convergence_figure(history, selection, title, split_days=None):
     else:
         axis.text(0.5, 0.5, "No recorded refit accuracies", ha="center", va="center",
                   transform=axis.transAxes)
-    if history and history[0].get("algorithm") == "log_stft":
-        axis.text(0.02, 0.03, "Standalone log-STFT: one fit, no outer updates",
-                  transform=axis.transAxes, fontsize=9)
     return figure
 
 
@@ -107,16 +103,12 @@ def save_convergence_plots(run_dir):
     history = json.loads((run_dir / "history.json").read_text())
     if not history:
         raise ValueError("Cannot plot an empty training history")
-    selection_path = run_dir / "selection.json"
-    selection = json.loads(selection_path.read_text()) if selection_path.exists() else {}
-    config_path = run_dir / "config.json"
-    config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    query_report = selection.get("query", selection if selection.get("role") == "query" else {})
+    selection = json.loads((run_dir / "selection.json").read_text())
+    config = json.loads((run_dir / "config.json").read_text())
     split_days = dict(Support=list(range(8)),
-                      Query=config.get("query_validation_days", query_report.get("days")),
-                      Valid=config.get("selection_validation_days", selection.get("days")
-                                     if selection.get("role") in {"valid", "selection"} else None),
-                      Test=selection.get("test", selection.get("eval", {})).get("days", [12, 13]))
+                      Query=config["query_validation_days"],
+                      Valid=config["selection_validation_days"],
+                      Test=selection["test"]["days"])
     rows = accuracy_history(run_dir, history, selection)
     title = ", ".join(sorted(selection.get("subjects", {}))) or run_dir.name
     figure = convergence_figure(rows, selection, title, split_days)

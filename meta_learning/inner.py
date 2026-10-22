@@ -112,8 +112,8 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
         return value, accuracy
 
     initial_loss, initial_accuracy = measure(weights)
-    best_loss = previous_loss = initial_loss
-    best_epoch, steps = 0, 0
+    previous_loss = initial_loss
+    steps = 0
     history = []
     for epoch in range(1, config.inner_epochs + 1):
         order = torch.randperm(len(labels), device=features.device)
@@ -138,25 +138,23 @@ def run_fit(reference, features, labels, config, differentiable, progress, segme
         if not measure_epoch:
             continue
         loss, accuracy = measure(weights)
-        if loss < best_loss:
-            best_loss, best_epoch = loss, epoch
         relative_change = abs(previous_loss - loss) / max(abs(previous_loss), 1e-12)
         previous_loss = loss
         row = dict(epoch=epoch, optimizer_steps=steps, support_loss=loss,
-                   support_accuracy=accuracy, best_support_loss=best_loss,
+                   support_accuracy=accuracy,
                    relative_loss_change=relative_change)
         history.append(row)
         if progress:
-            progress(dict(row, selected_epoch=epoch))
+            progress(row)
     report = dict(samples=len(labels), epochs_requested=config.inner_epochs,
                   epochs_run=config.inner_epochs, optimizer_steps=steps,
-                  selected_epoch=config.inner_epochs, best_epoch=best_epoch, initial_support_loss=initial_loss,
+                  initial_support_loss=initial_loss,
                   diagnostic_epochs=[row["epoch"] for row in history],
                   diagnostic_evaluations=1 + len(history),
-                  optimizer=config.inner_optimizer, classifier_dropout=config.classifier_dropout,
+                  optimizer="sgd", classifier_dropout=config.classifier_dropout,
                   batchnorm="Support batch statistics during training; support EMA during evaluation",
                   initial_support_accuracy=initial_accuracy, last_support_accuracy=history[-1]["support_accuracy"],
-                  best_support_loss=best_loss, last_support_loss=history[-1]["support_loss"],
+                  last_support_loss=history[-1]["support_loss"],
                   stop_reason="fixed_epochs",
                   history=history)
     return ClassifierFit(dict(zip(names, weights)), buffers, report)

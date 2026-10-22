@@ -10,7 +10,6 @@ from source_data import DAY_SPLITS, TARGETS
 
 @dataclass(frozen=True)
 class Config:
-    algorithm: str = "meta"
     targets: tuple = ("X2",)
     seed: int = 0
     outer_steps: int = 100
@@ -19,7 +18,6 @@ class Config:
     inner_log_every: int = 0
     inner_shuffle_seed: int | None = None
     batchnorm_recalibration: bool = True
-    inner_optimizer: str = "sgd"
     inner_lr: float = 0.01
     inner_weight_decay: float = 0.0
     classifier_dropout: float = 0.0
@@ -41,10 +39,6 @@ class Config:
     gradient_clip: float = 5.0
 
     def validate(self):
-        if self.algorithm not in {"meta", "pooled", "log_stft"}:
-            raise ValueError("algorithm must be meta, pooled, or log_stft")
-        if self.inner_optimizer != "sgd":
-            raise ValueError("inner_optimizer must be sgd (without momentum)")
         if (not self.targets or len(set(self.targets)) != len(self.targets) or
                 any(mouse not in TARGETS for mouse in self.targets)):
             raise ValueError("Choose distinct MouseLFP targets")
@@ -114,15 +108,9 @@ class Config:
     @classmethod
     def from_dict(cls, value):
         value = dict(value)
-        # Older zero-momentum configurations describe the same plain SGD solver.
-        if "inner_momentum" in value:
-            momentum = value.pop("inner_momentum")
-            if type(momentum) not in {int, float} or momentum != 0:
-                raise ValueError("SGD momentum is no longer supported; remove inner_momentum")
         unknown = set(value) - {field.name for field in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown configuration fields: {sorted(unknown)}")
-        value = dict(value)
         for key in ["targets", "query_validation_days", "selection_validation_days"]:
             if value.get(key) is not None:
                 value[key] = tuple(value[key])

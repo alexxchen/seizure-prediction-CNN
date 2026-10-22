@@ -8,30 +8,27 @@ from models.cnn import SeizureCNN
 
 
 class MetaModel(nn.Module):
-    def __init__(self, cnn_seed=None, frontend_batch_size=32):
+    def __init__(self, cnn_seed=0, frontend_batch_size=32):
         super().__init__()
-        self.frontend = WaveformFrontend(seed=cnn_seed if cnn_seed is not None else 0,
-                                         batch_size=frontend_batch_size)
-        self.cnn = SeizureCNN(self.cnn_input_shape())
-        if cnn_seed is not None:
-            self.reset_classifier(cnn_seed)
+        self.frontend = WaveformFrontend(seed=cnn_seed, batch_size=frontend_batch_size)
+        self.cnn = self._new_classifier(cnn_seed)
 
     def cnn_input_shape(self):
         """The 1-D CNN consumes (channels, time); both follow the attached frontend."""
         return tuple(self.frontend.output_shape)
 
-    def use_frontend(self, frontend, seed):
-        """Attach another frontend and a fresh reference CNN shaped for its output."""
-        self.frontend = frontend
-        self.reset_classifier(seed)
+    def _new_classifier(self, seed):
+        """Initialize one CPU classifier without advancing caller CPU/CUDA RNGs."""
+        with torch.random.fork_rng(devices=[]):
+            generator = torch.Generator(device="cpu").manual_seed(seed)
+            torch.set_rng_state(generator.get_state())
+            return SeizureCNN(self.cnn_input_shape())
 
     def reset_classifier(self, seed):
-        """Use an unlearned, reproducible reference without advancing caller RNGs."""
+        """Replace task weights and BatchNorm state with a fresh unlearned reference."""
         parameter = next(self.cnn.parameters())
-        with torch.random.fork_rng():
-            torch.manual_seed(seed)
-            self.cnn = SeizureCNN(self.cnn_input_shape()).to(device=parameter.device, dtype=parameter.dtype)
-        self.train(self.training)
+        self.cnn = self._new_classifier(seed).to(device=parameter.device, dtype=parameter.dtype)
+        self.cnn.train(self.training)
 
     def forward(self, waveform):
         return self.cnn(self.frontend(waveform))

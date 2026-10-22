@@ -55,14 +55,12 @@ def balanced_indices(labels, available, per_class, rng):
 
 
 def crops_support(config):
-    """Support crops apply identically to meta inner fits and per-mouse fits (never log-STFT)."""
-    return (config.augment_random_crop and config.random_crop_scope in {"both", "support"}
-            and config.algorithm != "log_stft")
+    """Support crops apply identically to meta inner fits and per-mouse fits."""
+    return config.augment_random_crop and config.random_crop_scope in {"both", "support"}
 
 
 def crops_query(config):
-    return (config.augment_random_crop and config.random_crop_scope in {"both", "query"}
-            and config.algorithm != "log_stft")
+    return config.augment_random_crop and config.random_crop_scope in {"both", "query"}
 
 
 def event_crop_indices(split, indices, count):
@@ -89,7 +87,7 @@ def support_inputs(split, indices, config, rng, device):
     """Materialize already planned support contexts, or unchanged fixed windows."""
     if crops_support(config):
         return split.random_crop_batch(indices, rng, device)
-    return split.batch(indices, split.scale(indices), device)
+    return split.batch(indices, device)
 
 
 def event_sample_weights(split, indices, device):
@@ -119,22 +117,17 @@ def query_task_weights(queries, episodes):
     return counts, {mouse: count / total for mouse, count in counts.items()}
 
 
-def episode_batch(support_split, query_split, episode, config, rng, device, *, return_event_weights=False):
+def episode_batch(support_split, query_split, episode, config, rng, device):
     support = support_indices(support_split, episode.support_indices, config)
     support = balanced_indices(support_split.labels, support, config.support_per_class, rng)
     crop_query = crops_query(config)
     query = (event_crop_indices(query_split, episode.query_indices, config.query_crops)
              if crop_query else episode.query_indices)
     query = balanced_indices(query_split.labels, query, config.query_per_class, rng)
-    # Identity scaling preserves absolute amplitude before the neural frontend.
-    scale = support_split.scale(support)
     # Crop positions come from the episode RNG, so checkpoints resume them exactly and a
     # fixed inner_shuffle_seed also fixes them.
     # Cropped sides contribute K examples per event and class before optional sample caps.
     support_batch = support_inputs(support_split, support, config, rng, device)
     query_batch = (query_split.random_crop_batch(query, rng, device) if crop_query else
-                   query_split.batch(query, scale, device))
-    if return_event_weights:
-        return support_batch, query_batch, (event_sample_weights(support_split, support, device),
-                                           event_sample_weights(query_split, query, device))
-    return support_batch, query_batch
+                   query_split.batch(query, device))
+    return support_batch, query_batch, event_sample_weights(query_split, query, device)

@@ -2,23 +2,16 @@
 
 No spectrum is precomputed and no stage is hand-designed: a pre-activation 1-D
 ResNet with strided downsampling maps each preprocessed waveform to a
-(channels, time) feature sequence for the 1-D task CNN. The parameter-free log-STFT control keeps
-a frozen cosine-window DFT filterbank on the same cached waveforms.
+(channels, time) feature sequence for the 1-D task CNN.
 """
-
-import math
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
 from meta_learning.waveform import WAVEFORM_CONFIG
 
 
-FILTERBANK_CONFIG = dict(sample_hz=256, frame_length=256, hop_length=128, frequency_hz=[1, 40],
-    initialization="Cosine-window (scipy 'cosine', symmetric) cos/sin pairs: an unnormalized 256-point DFT",
-    magnitude="sqrt(real^2 + imag^2 + 1e-6)", compression="log1p / ln(10)", learnable=True)
 FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672,
     input_normalization="Per-window RMS after existing waveform mean removal; no fitted statistics",
     rms_numerics="Peak-scaled RMS computation; dtype-tiny floor and zero output for silence",
@@ -29,8 +22,7 @@ FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672,
           "(zero-initialized), added to the residual stream",
     head="GroupNorm(8) -> GELU -> Conv1d(64 -> output_channels, k1); output is a (channels, time) sequence",
     output_channels=64, time_bins=56,
-    initialization="Seeded PyTorch defaults (random); zero-initialized last conv in each residual block; "
-                   "no alignment with log-STFT")
+    initialization="Seeded PyTorch defaults (random); zero-initialized last conv in each residual block")
 
 
 def rms_normalize_waveform(waveform):
@@ -45,44 +37,10 @@ def rms_normalize_waveform(waveform):
     return torch.where(magnitude > 0, waveform / rms, torch.zeros_like(waveform))
 
 
-def filterbank_reference():
-    """Windowed DFT rows for 1-40 Hz; magnitude equals |STFT| of the cosine-windowed frame."""
-    length, rate = FILTERBANK_CONFIG["frame_length"], FILTERBANK_CONFIG["sample_hz"]
-    low, high = FILTERBANK_CONFIG["frequency_hz"]
-    n = torch.arange(length, dtype=torch.float64)
-    window = torch.sin(math.pi * (n + 0.5) / length)
-    frequencies = torch.arange(low, high + 1, dtype=torch.float64) * length / rate
-    phase = 2 * math.pi * frequencies[:, None] * n[None] / length
-    weights = torch.cat([window * torch.cos(phase), -window * torch.sin(phase)])
-    return weights.unsqueeze(1).float()
-
-
-def log_magnitude_sequence(waveform, filterbank):
-    """(N, samples) -> (N, frequencies, frames) log10(1 + |filter response|)."""
-    response = F.conv1d(waveform.unsqueeze(1), filterbank, stride=FILTERBANK_CONFIG["hop_length"])
-    real, imag = response.chunk(2, dim=1)
-    magnitude = torch.sqrt(real.square() + imag.square() + 1e-6)
-    return torch.log1p(magnitude) / math.log(10)
-
-
 def check_waveform(waveform):
     if waveform.ndim != 2 or waveform.shape[1] != FRONTEND_CONFIG["input_samples"]:
         raise ValueError(f"Expected preprocessed waveforms shaped (N, {FRONTEND_CONFIG['input_samples']}) "
                          f"at {WAVEFORM_CONFIG['target_hz']} Hz")
-
-
-class LogSTFTFrontend(nn.Module):
-    """Parameter-free control: 40 frozen DFT log-magnitude bands as channels, average-pooled to 56 bins."""
-
-    output_shape = (40, FRONTEND_CONFIG["time_bins"])
-
-    def __init__(self):
-        super().__init__()
-        self.register_buffer("filterbank", filterbank_reference())
-
-    def forward(self, waveform):
-        check_waveform(waveform)
-        return F.adaptive_avg_pool1d(log_magnitude_sequence(waveform, self.filterbank), FRONTEND_CONFIG["time_bins"])
 
 
 class ResidualBlock1d(nn.Module):

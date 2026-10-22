@@ -56,15 +56,16 @@ def annotate(table, probabilities):
     return result
 
 
-def extract(model, values, scale, batch_size, frontend_batch_size, device):
+def extract(model, values, batch_size, device):
     """Extract exactly what the fitted CNN consumes, keeping BatchNorm frozen."""
     model.eval()
     buffers = {name: value.detach().clone() for name, value in model.named_buffers()}
+    frontend_batch_size = model.frontend.batch_size
     features, probabilities = [], []
     with torch.inference_mode():
         for start in range(0, len(values.labels), frontend_batch_size):
             indices = np.arange(start, min(start + frontend_batch_size, len(values.labels)))
-            inputs, _ = values.batch(indices, scale, device)
+            inputs, _ = values.batch(indices, device)
             output = model.frontend(inputs)
             if not torch.isfinite(output).all():
                 raise ValueError("Non-finite frontend features")
@@ -154,7 +155,6 @@ def main(args):
     from meta_learning.config import Config
     from meta_learning.data import DataStore
     from meta_learning.engine import validation_roles
-    from meta_learning.frontend import LogSTFTFrontend
     from meta_learning.model import MetaModel
 
     if selection["identity"] != metadata["identity"]:
@@ -187,8 +187,6 @@ def main(args):
             raise ValueError("Checkpoint identity mismatch")
         with torch.random.fork_rng():
             model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size)
-            if config.algorithm == "log_stft":
-                model.use_frontend(LogSTFTFrontend(), config.seed)
         model.load_state_dict(state["model"], strict=True)
         model.to(device).requires_grad_(False)
         rows, arrays, checks = [], [], {}
@@ -200,8 +198,7 @@ def main(args):
             values = values.subset_days(days) if days is not None else values
             if role != "support" and values.fingerprint != state[f"{role}_fingerprint"]:
                 raise ValueError(f"{mouse}: {role} sample provenance changed")
-            features, probabilities = extract(model, values, state["scale"], config.batch_size,
-                                               config.frontend_batch_size, device)
+            features, probabilities = extract(model, values, config.batch_size, device)
             table = annotate(values.table, probabilities)
             table["role"] = role
             check = dict(samples=len(table), days=sorted(int(x) for x in table.day.unique()),
@@ -268,7 +265,7 @@ def main(args):
     import importlib.metadata
 
     report = dict(run=str(run_dir), source_snapshot=str(source), selected_step=selection["step"],
-                  algorithm=config.algorithm, seed=args.seed, tsne_iterations=args.iterations,
+                  algorithm="meta", seed=args.seed, tsne_iterations=args.iterations,
                   pca_fit="support fixed reference windows only", tsne_fit="all fixed reference windows per mouse",
                   feature_transform="flatten full frontend output; no added scaling",
                   labels_used_to_fit_embedding=False, training_performed=False,

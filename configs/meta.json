@@ -1,5 +1,4 @@
 {
-  "algorithm": "meta",
   "targets": ["X1","X2","X9","X14"],
   "seed": 0,
   "outer_steps": 100,
@@ -7,7 +6,6 @@
   "inner_checkpoint_steps": 20,
   "inner_log_every": 0,
   "inner_shuffle_seed": null,
-  "inner_optimizer": "sgd",
   "inner_lr": 0.01,
   "inner_weight_decay": 0.0,
   "classifier_dropout": 0.0,

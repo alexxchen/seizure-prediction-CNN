@@ -1,6 +1,5 @@
 """Finite training, exact checkpoint resumption, model selection, and inference."""
 
-import copy
 import contextlib
 import importlib.metadata
 import json
@@ -12,10 +11,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from meta_learning.frontend import FILTERBANK_CONFIG, FRONTEND_CONFIG, LogSTFTFrontend, WaveformFrontend
+from meta_learning.frontend import FRONTEND_CONFIG, WaveformFrontend
 from meta_learning.waveform import WAVEFORM_CONFIG
 from meta_learning.adaptation import adapt_model, predict
-from meta_learning.algorithms import meta_objective, pooled_objective
+from meta_learning.algorithms import meta_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json
 from meta_learning.config import Config
 from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch, query_task_weights
@@ -93,7 +92,7 @@ def report_roles(report):
     return roles
 
 
-def validate(initial, store, config, device, step, run_dir, identity, *, fit_stage="per_mouse_fit"):
+def validate(initial, store, config, device, step, identity):
     """Fit on support only; score query, valid, and held-out test with the same classifier.
 
     The root aggregate/subjects select checkpoints: selection days when configured,
@@ -105,9 +104,8 @@ def validate(initial, store, config, device, step, run_dir, identity, *, fit_sta
     for position, mouse in enumerate(config.targets):
         # Per-mouse fits share the meta inner fits' support policy, including support crops.
         training = store.load_crops(mouse, "train") if crops_support(config) else store.load(mouse, "train")
-        model, scale, fit = adapt_model(initial, training, config, device, config.seed + 10000 + position,
-                                        return_diagnostics=True,
-                                        progress=fit_progress(fit_stage, step=step, mouse=mouse))
+        model, fit = adapt_model(initial, training, config, device, config.seed + 10000 + position,
+                                        progress=fit_progress("per_mouse_fit", step=step, mouse=mouse))
         predictions[mouse], fingerprints = {}, {}
         for role, part, days in roles:
             values = store.load(mouse, part)
@@ -119,7 +117,7 @@ def validate(initial, store, config, device, step, run_dir, identity, *, fit_sta
             if days is not None:
                 values = values.subset_days(days)
             metrics, probabilities = prediction_metrics(values.labels, predict(
-                model, values, scale, config.batch_size, device, frontend_batch_size=config.frontend_batch_size))
+                model, values, config.batch_size, device))
             metrics.update(evaluation_protocol_sha256=values.fingerprint, classifier_fit=fit,
                            days=sorted(int(day) for day in values.table.day.unique()))
             subjects[role][mouse] = metrics
@@ -127,10 +125,10 @@ def validate(initial, store, config, device, step, run_dir, identity, *, fit_sta
             table = values.table.copy()
             table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
             predictions[mouse][role] = table
-            fit_progress(f"{fit_stage}_{role}", step=step, mouse=mouse,
+            fit_progress(f"per_mouse_fit_{role}", step=step, mouse=mouse,
                          split=role, days=metrics["days"])(
                 {key: metrics[key] for key in ["samples", "loss", "accuracy", "auc", "sensitivity", "specificity"]})
-        adapted[mouse] = dict(model=cpu_state(model), scale=scale, mouse=mouse,
+        adapted[mouse] = dict(model=cpu_state(model), mouse=mouse,
                               training_fingerprint=training.fingerprint, **fingerprints,
                               identity=identity, step=step, config=config.to_dict(), classifier_fit=fit)
     reports = {}
@@ -154,82 +152,9 @@ def mouse_metrics(report, mouse):
     return {role: value["subjects"][mouse] for role, value in report_roles(report).items()}
 
 
-def query_improves(score, previous):
+def selection_improves(score, previous):
     """Checkpoint selection uses the mean log loss of the selection report."""
     return previous is None or score["loss"] < previous["loss"]
-
-
-def log_stft_baseline(initial, store, config, device, run_dir, identity):
-    """Fit the standalone log_stft algorithm; reuse its completed report on resume."""
-    directory = Path(run_dir) / "baseline" / "log_stft"
-    report_path = directory / "report.json"
-    if report_path.exists():
-        report = json.loads(report_path.read_text())
-        if report["identity"] != identity or set(report["subjects"]) != set(config.targets):
-            raise ValueError("Pure log-STFT baseline belongs to another run")
-        for record in report["adapted_models"].values():
-            if file_hash(Path(run_dir) / record["path"]) != record["sha256"]:
-                raise ValueError("Pure log-STFT baseline checkpoint changed")
-        reused = True
-    else:
-        baseline = copy.deepcopy(initial)
-        baseline.use_frontend(LogSTFTFrontend().to(device), config.seed)
-        started = time.monotonic()
-        # Per-mouse fitting is reproducible and does not change caller RNG state.
-        with torch.random.fork_rng():
-            report, predictions, adapted = validate(baseline, store, config, device, 0,
-                run_dir, identity, fit_stage="baseline_log_stft_fit")
-        records = {}
-        for mouse, state in adapted.items():
-            path = directory / mouse / "checkpoint.pt"
-            state["frontend_type"] = "pure_log_stft"
-            save_checkpoint(path, state)
-            records[mouse] = dict(path=str(path.relative_to(run_dir)), sha256=file_hash(path))
-            save_predictions(path.parent, predictions[mouse], mouse_metrics(report, mouse))
-        report.update(identity=identity, frontend_type="pure_log_stft", frontend_parameters=0,
-                      description="Frozen cosine-window DFT filterbank log1p magnitude, average-pooled to 40 band channels x 56 time bins for the 1-D CNN; no learned stages; "
-                                  "fresh per-mouse CNN trained on Days 0-7; " +
-                                  ", ".join(f"{role} Days {value['days']}" for role, value in report_roles(report).items()),
-                      adapted_models=records, wall_seconds=time.monotonic() - started)
-        # Publish the completion marker only after all per-mouse artifacts exist.
-        write_json(report_path, report)
-        reused = False
-    keys = ["samples", "loss", "accuracy", "auc", "sensitivity", "specificity"]
-    for mouse in report["subjects"]:
-        print(json.dumps(dict(stage="baseline_log_stft_mouse", step=0, mouse=mouse, reused=reused,
-                              **{role: {key: metrics[key] for key in keys}
-                                 for role, metrics in mouse_metrics(report, mouse).items()})), flush=True)
-    print(json.dumps(dict(stage="baseline_log_stft", step=0, reused=reused,
-                          **{role: value["aggregate"] for role, value in report_roles(report).items()})), flush=True)
-    return report
-
-
-def run_log_stft(model, store, config, device, run_dir, identity):
-    """One support-only CNN fit per mouse, without an outer optimizer or loop."""
-    status_path = run_dir / "status.json"
-    previous_status = json.loads(status_path.read_text()) if status_path.exists() else {}
-    try:
-        if previous_status.get("status") != "complete":
-            write_json(status_path, dict(status="log_stft_fit", step=0, target_steps=0))
-        report = log_stft_baseline(model, store, config, device, run_dir, identity)
-        selection = dict(report, criterion="Single fixed log-STFT fit; no outer updates or checkpoint search")
-        selection_path = run_dir / "selection.json"
-        if previous_status.get("status") == "complete" and selection_path.exists():
-            if json.loads(selection_path.read_text()) != selection:
-                raise ValueError("Standalone baseline selection changed")
-            return selection
-        write_json(run_dir / "selection.json", selection)
-        write_json(run_dir / "history.json", [dict(step=0, algorithm="log_stft",
-                   **{("query_refit" if role == "query" else role): value["aggregate"]
-                      for role, value in report_roles(report).items()})])
-        peak = torch.cuda.max_memory_allocated(device) / 2**20 if device.type == "cuda" else 0.0
-        peak = max(peak, previous_status.get("peak_vram_mb", 0.0))
-        write_json(status_path, dict(status="complete", step=0, target_steps=0,
-                   training_wall_seconds=report["wall_seconds"], peak_vram_mb=peak, selection=selection))
-        return selection
-    except BaseException as error:
-        write_json(run_dir / "status.json", dict(status="interrupted", error=type(error).__name__, message=str(error)))
-        raise
 
 
 def train_run(config, store, run_dir, prepared_dir, device, resume=False):
@@ -261,34 +186,22 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                        valid=(None if config.selection_validation_days is None else
                                                   f"checkpoint-selection valid Days {list(config.selection_validation_days)}"),
                                        test="held-out test Days 12/13"),
-                      selection_criterion=("Single fixed log-STFT fit; no checkpoint search"
-                          if config.algorithm == "log_stft" else selection_criterion(config)),
+                      selection_criterion=selection_criterion(config),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
-                                       "on frontend weight matrices; frontend biases, GroupNorm, and any auxiliary CNN undecayed"),
+                                       "on frontend weight matrices; frontend biases and GroupNorm undecayed"),
                       runtime=runtime_identity(device), sample_config=sample_pipeline.SAMPLE_CONFIG,
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),
-                      waveform_config=WAVEFORM_CONFIG, filterbank_config=FILTERBANK_CONFIG,
-                      frontend_config=(dict(architecture="pure_log_stft", input_transform="frozen DFT filterbank, log1p_base10 magnitude",
-                          temporal_pooling="adaptive_average", time_bins=LogSTFTFrontend.output_shape[1],
-                          frequency_bins=LogSTFTFrontend.output_shape[0], parameters=0)
-                          if config.algorithm == "log_stft" else
-                          dict(FRONTEND_CONFIG, checkpoint_batch_size=config.frontend_batch_size)),
-                      baseline_policy="Standalone algorithm=log_stft only; no automatic startup baseline",
-                      day_splits=DAY_SPLITS, cnn_input_shape=list((LogSTFTFrontend if config.algorithm == "log_stft" else WaveformFrontend).output_shape),
+                      waveform_config=WAVEFORM_CONFIG,
+                      frontend_config=dict(FRONTEND_CONFIG, checkpoint_batch_size=config.frontend_batch_size),
+                      day_splits=DAY_SPLITS, cnn_input_shape=list(WaveformFrontend.output_shape),
                       cnn="1-D CNN: three Conv1d/AxisBatchNorm/max-pool stages (16, 32, 64), flatten, dense 128, 2 logits",
-                      task_schedule=dict(mice=("Every configured mouse fitted once; no outer loop"
-                                             if config.algorithm == "log_stft" else
-                                             "Every configured mouse exactly once per outer step"),
+                      task_schedule=dict(mice="Every configured mouse exactly once per outer step",
                                          mouse_order=list(config.targets),
-                                         tasks_per_step=0 if config.algorithm == "log_stft" else len(config.targets),
+                                         tasks_per_step=len(config.targets),
                                          episodes="One fixed support/query task per mouse",
-                                         gradient_reduction=("None" if config.algorithm == "log_stft" else
-                                             "Sum of mouse gradients weighted by eligible query-event counts"),
-                                         query_events=query_events,
-                                         outer_task_weights={} if config.algorithm == "log_stft" else task_weights),
-                      pooled_example_weighting="Within each task, mean of per-event support/query losses; "
-                                               "across tasks, weight by query-event counts as in meta",
-                      normalization="Identity (scale=1) before the neural frontend; no fitted statistics",
+                                         gradient_reduction="Sum of mouse gradients weighted by eligible query-event counts",
+                                         query_events=query_events, outer_task_weights=task_weights),
+                      normalization="Per-window RMS inside the frontend; no fitted dataset/task statistics",
                       batchnorm=("Support batch statistics during training; query/test use exact support statistics of the final "
                                  "weights, recalibrated differentiably after each fit" if config.batchnorm_recalibration else
                                  "Support batch statistics and per-task running EMA; query/test use frozen support EMA; full EMA hypergradient"),
@@ -296,36 +209,31 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                          scope=config.random_crop_scope, query_crops=config.query_crops,
                                          support_crops=config.support_crops,
                                          crop_count_unit="per_event_per_class",
-                                         policy="Meta/pooled support, query, or both per scope, and per-mouse support fitting: "
+                                         policy="Meta support, query, or both per scope, and per-mouse support fitting: "
                                                 "fresh uniformly placed 112 s crops of each row's context segment every "
                                                 "outer step from the episode RNG; K crops per event and class; negatives "
                                                 "sample uniformly over all legal starts in eligible safe intervals of the "
                                                 "same mouse and day, independently of fixed negative rows; optional per-class caps "
                                                 "limit generated examples; query loss averaged within and across represented events; per-mouse fitting uses the "
                                                 "same support policy with a fixed seed; fixed windows for selection, query-refit "
-                                                "evaluation, and test; no crops for log-STFT")
+                                                "evaluation, and test")
                                     if config.augment_random_crop else "None"),
                       inner_shuffles=("Fresh window order and minibatch shuffles every outer step"
                                       if config.inner_shuffle_seed is None else
                                       f"Fixed per task: seed {config.inner_shuffle_seed} + task index; "
                                       "identical window order and minibatch shuffles every outer step"),
-                      inner_updates=(f"Task-local CNN {config.inner_optimizer}; exactly {config.inner_epochs} full epochs "
+                      inner_updates=(f"Task-local CNN plain SGD; exactly {config.inner_epochs} full epochs "
                                      + (f"over {config.support_crops} random crops per event and class (meta inner fits "
                                         "from the episode RNG; per-mouse fits from a fixed per-mouse seed)"
                                         if crops_support(config) else "over fixed support windows")
                                      + f"; L2 toward the unlearned reference weights, coefficient {config.inner_weight_decay}"
-                                     + " in both meta inner and per-mouse fits"
-                                     if config.algorithm in {"meta", "log_stft"} else "None"),
-                      outer_updates={"meta": "Shared frontend only",
-                                     "pooled": "Frontend and auxiliary CNN; CNN discarded before per-mouse fitting",
-                                     "log_stft": "None; fixed frontend and one CNN fit per mouse"}[config.algorithm],
+                                     + " in both meta inner and per-mouse fits"),
+                      outer_updates="Shared frontend only",
                       classifier_seed=config.seed,
                       frontend_seed=config.seed,
                       adaptation="Fresh CNN; frozen frontend; same fixed epoch budget as inner training",
                       inner_stopping="Fixed epoch budget; no early stopping; final epoch classifier; support metrics are diagnostic only",
-                      meta_gradient=("Full unrolled frontend hypergradient through every fixed-epoch update with RNG-preserving segment checkpointing"
-                                     if config.algorithm == "meta" else
-                                     "None" if config.algorithm == "log_stft" else "Direct supervised gradient"))
+                      meta_gradient="Full unrolled frontend hypergradient through every fixed-epoch update with RNG-preserving segment checkpointing")
     identity = digest(provenance)
     if resume:
         if not metadata_path.exists() or json.loads(metadata_path.read_text())["identity"] != identity:
@@ -348,16 +256,14 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
         if source_hashes() != provenance["source_sha256"]:
             raise ValueError("Source files changed while snapshotting")
     write_json(run_dir / "episodes.json", {mouse: [dict(task.describe(), query_events=query_events[mouse],
-        outer_weight=0.0 if config.algorithm == "log_stft" else task_weights[mouse])]
+        outer_weight=task_weights[mouse])]
         for mouse, task in episodes.items()})
     seed_everything(config.seed)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size).to(device)
-    if config.algorithm == "log_stft":
-        return run_log_stft(model, store, config, device, run_dir, identity)
-    model.cnn.requires_grad_(config.algorithm == "pooled")
-    outer_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    model.cnn.requires_grad_(False)
+    outer_parameters = list(model.frontend.parameters())
     # Decoupled weight decay applies only to frontend weight matrices (not biases or norms).
     decayed = {id(parameter) for parameter in model.frontend.decay_parameters()}
     groups = [dict(params=[p for p in outer_parameters if id(p) in decayed], weight_decay=config.outer_weight_decay),
@@ -410,25 +316,21 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 # A fixed seed reuses the same window order and inner minibatch shuffles every
                 # outer step, so the meta objective is a deterministic function of the frontend.
                 task_rng = rng if fixed_seed is None else np.random.default_rng(fixed_seed)
-                batches = episode_batch(training[mouse], queries[mouse], episode, config, task_rng, device,
-                                        return_event_weights=True)
-                support, query = batches[:2]
-                if config.algorithm == "meta":
-                    with inner_shuffle_rng(fixed_seed, device):
-                        loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
-                            progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse),
-                            query_weights=batches[2][1])
-                    fit.update(inner_shuffle_seed=fixed_seed)
-                    fit.update(mouse=mouse, support_days=list(episode.support_days),
-                               query_days=list(episode.query_days), query_samples=len(query[1]),
-                               query_events=query_events[mouse], outer_weight=task_weights[mouse])
-                    fit["query"].update(events=query_events[mouse], outer_weight=task_weights[mouse])
-                    write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
-                    inner_reports.append(fit)
-                    fit_progress("query_task", step=step, task=task_index, mouse=mouse,
-                                 query_split="query", query_days=list(episode.query_days))(fit["query"])
-                else:
-                    loss = pooled_objective(model, support, query, config, event_weights=batches[2])
+                support, query, query_weights = episode_batch(
+                    training[mouse], queries[mouse], episode, config, task_rng, device)
+                with inner_shuffle_rng(fixed_seed, device):
+                    loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
+                        progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse),
+                        query_weights=query_weights)
+                fit.update(inner_shuffle_seed=fixed_seed)
+                fit.update(mouse=mouse, support_days=list(episode.support_days),
+                           query_days=list(episode.query_days), query_samples=len(query[1]),
+                           query_events=query_events[mouse], outer_weight=task_weights[mouse])
+                fit["query"].update(events=query_events[mouse], outer_weight=task_weights[mouse])
+                write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
+                inner_reports.append(fit)
+                fit_progress("query_task", step=step, task=task_index, mouse=mouse,
+                             query_split="query", query_days=list(episode.query_days))(fit["query"])
                 if not torch.isfinite(loss):
                     raise FloatingPointError("Non-finite outer loss")
                 (loss * task_weights[mouse]).backward()
@@ -438,23 +340,20 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
             row = dict(step=step, mice=list(config.targets), tasks=len(losses),
                        query_events=query_events, outer_task_weights=task_weights,
                        outer_loss=float(sum(losses)), gradient_norm=float(grad_norm))
-            if inner_reports:
-                subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
-                aggregate = {key: float(sum(task_weights[mouse] * metrics[key]
-                                           for mouse, metrics in subjects.items()))
-                             for key in ["loss", "accuracy"]}
-                row["query"] = dict(split="query", role="query", days=list(config.query_validation_days), timing="before_outer_update",
-                                    aggregation="Eligible query-event weighted across mice",
-                                    aggregate=aggregate, subjects=subjects)
-                fit_progress("query_step", step=step)(row["query"])
-                row["inner"] = dict(epochs_per_task=config.inner_epochs, support_crops=config.support_crops,
-                                    mean_epochs=float(np.mean([fit["epochs_run"] for fit in inner_reports])),
-                                    mean_selected_epoch=float(np.mean([fit["selected_epoch"] for fit in inner_reports])),
-                                    optimizer_steps=sum(fit["optimizer_steps"] for fit in inner_reports),
-                                    fixed_epoch_tasks=sum(fit["stop_reason"] == "fixed_epochs" for fit in inner_reports))
+            subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
+            aggregate = {key: float(sum(task_weights[mouse] * metrics[key]
+                                       for mouse, metrics in subjects.items()))
+                         for key in ["loss", "accuracy"]}
+            row["query"] = dict(split="query", role="query", days=list(config.query_validation_days), timing="before_outer_update",
+                                aggregation="Eligible query-event weighted across mice",
+                                aggregate=aggregate, subjects=subjects)
+            fit_progress("query_step", step=step)(row["query"])
+            row["inner"] = dict(epochs_per_task=config.inner_epochs, support_crops=config.support_crops,
+                                optimizer_steps=sum(fit["optimizer_steps"] for fit in inner_reports),
+                                fixed_epoch_tasks=sum(fit["stop_reason"] == "fixed_epochs" for fit in inner_reports))
             improved = False
             if step % config.eval_every == 0 or step == config.outer_steps:
-                report, predictions, adapted = validate(model, store, config, device, step, run_dir, identity)
+                report, predictions, adapted = validate(model, store, config, device, step, identity)
                 roles = report_roles(report)
                 row["query_refit"] = roles["query"]["aggregate"]
                 if "valid" in roles:
@@ -463,7 +362,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 row["frontend"] = model.frontend.describe()["state"]
                 score = report["aggregate"]
                 previous = selection["aggregate"] if selection else None
-                improved = query_improves(score, previous)
+                improved = selection_improves(score, previous)
                 fit_progress("evaluation_step", step=step)(
                     {role: value["aggregate"] for role, value in roles.items()})
                 if improved:
@@ -502,8 +401,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
 
 
 def evaluate_run(store, run_dir, device, split="test"):
-    if split not in {"query", "valid", "test", "validation"}:
-        raise ValueError("Evaluation split must be query, valid, test, or legacy validation")
+    if split not in {"query", "valid", "test"}:
+        raise ValueError("Evaluation split must be query, valid, or test")
     run_dir = Path(run_dir)
     metadata = json.loads((run_dir / "run.json").read_text())
     if metadata["provenance"]["source_sha256"] != source_hashes():
@@ -515,12 +414,11 @@ def evaluate_run(store, run_dir, device, split="test"):
         raise ValueError("Selection belongs to another run")
     config = Config.from_dict(metadata["provenance"]["config"])
     seed_everything(config.seed)
-    roles = [entry for entry in validation_roles(config)
-             if (entry[1] == "validation" if split == "validation" else entry[0] == split)]
-    if not roles:
+    role = next((entry for entry in validation_roles(config) if entry[0] == split), None)
+    if role is None:
         raise ValueError("No independent valid days configured; checkpoint selection uses query")
-    source_split = "test" if split == "test" else "validation"
-    subjects = {role: {} for role, _, _ in roles}
+    _, source_split, days = role
+    subjects = {}
     for mouse in config.targets:
         record = selection["adapted_models"][mouse]
         path = run_dir / record["path"]
@@ -529,44 +427,31 @@ def evaluate_run(store, run_dir, device, split="test"):
         state = torch.load(path, map_location="cpu", weights_only=True)
         if state["identity"] != metadata["identity"] or state["mouse"] != mouse:
             raise ValueError("Selected checkpoint identity mismatch")
-        model = MetaModel(frontend_batch_size=config.frontend_batch_size).to(device)
-        if config.algorithm == "log_stft":
-            model.use_frontend(LogSTFTFrontend().to(device), config.seed)
+        model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size).to(device)
         model.load_state_dict(state["model"])
         values = store.load(mouse, source_split)
         if values.fingerprint != state[f"{source_split}_fingerprint"]:
             raise ValueError(f"{split} sample provenance changed")
-        for role, _, days in roles:
-            scored = values.subset_days(days) if days is not None else values
-            if scored.fingerprint != state[f"{role}_fingerprint"]:
-                raise ValueError(f"{role} sample provenance changed")
-            metrics, probabilities = prediction_metrics(scored.labels, predict(
-                model, scored, state["scale"], config.batch_size, device,
-                frontend_batch_size=config.frontend_batch_size))
-            metrics.update(evaluation_protocol_sha256=scored.fingerprint,
-                           classifier_fit=state["classifier_fit"],
-                           days=sorted(int(day) for day in scored.table.day.unique()))
-            subjects[role][mouse] = metrics
-            directory = run_dir / "evaluation" / role
-            destination = directory / mouse
-            destination.mkdir(parents=True, exist_ok=True)
-            table = scored.table.copy()
-            table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
-            table.to_csv(destination / "predictions.csv", index=False)
-            write_json(destination / "metrics.json", metrics)
-    reports = {}
-    for role, _, days in roles:
-        rows = subjects[role]
-        reports[role] = dict(split=role, role=role, source_split=source_split, days=list(days or DAY_SPLITS[source_split]),
-            selected_step=selection["step"], identity=metadata["identity"],
-            aggregate={key: float(np.mean([row[key] for row in rows.values()]))
-                       for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]},
-            subjects=rows, evaluation_protocol_sha256=digest(
-                {mouse: row["evaluation_protocol_sha256"] for mouse, row in rows.items()}))
-        write_json(run_dir / "evaluation" / role / "result.json", reports[role])
-    if split == "validation":
-        report = dict(reports.get("valid", reports["query"]), query=reports["query"])
-        write_json(run_dir / "evaluation" / split / "result.json", report)
-    else:
-        report = reports[split]
+        scored = values.subset_days(days) if days is not None else values
+        if scored.fingerprint != state[f"{split}_fingerprint"]:
+            raise ValueError(f"{split} sample provenance changed")
+        metrics, probabilities = prediction_metrics(scored.labels, predict(
+            model, scored, config.batch_size, device))
+        metrics.update(evaluation_protocol_sha256=scored.fingerprint,
+                       classifier_fit=state["classifier_fit"],
+                       days=sorted(int(day) for day in scored.table.day.unique()))
+        subjects[mouse] = metrics
+        destination = run_dir / "evaluation" / split / mouse
+        destination.mkdir(parents=True, exist_ok=True)
+        table = scored.table.copy()
+        table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
+        table.to_csv(destination / "predictions.csv", index=False)
+        write_json(destination / "metrics.json", metrics)
+    report = dict(split=split, role=split, source_split=source_split, days=list(days or DAY_SPLITS[source_split]),
+                  selected_step=selection["step"], identity=metadata["identity"],
+                  aggregate={key: float(np.mean([row[key] for row in subjects.values()]))
+                             for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]},
+                  subjects=subjects, evaluation_protocol_sha256=digest(
+                      {mouse: row["evaluation_protocol_sha256"] for mouse, row in subjects.items()}))
+    write_json(run_dir / "evaluation" / split / "result.json", report)
     return report

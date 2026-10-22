@@ -122,7 +122,7 @@ def encode(model, values, config, device):
     with torch.no_grad():
         for start in range(0, len(values.labels), config.frontend_batch_size):
             inputs, _ = values.batch(np.arange(start, min(start + config.frontend_batch_size,
-                                                         len(values.labels))), 1.0, device)
+                                                         len(values.labels))), device)
             features.append(model.frontend(inputs))
     return torch.cat(features), torch.tensor(np.array(values.labels, copy=True), device=device, dtype=torch.long)
 
@@ -166,8 +166,6 @@ def main(args):
     from source_data import TARGETS
 
     config = Config.from_dict(metadata["provenance"]["config"])
-    if config.algorithm != "meta":
-        raise ValueError("This experiment requires a learned meta frontend")
     targets = args.targets.split(",") if args.targets else list(TARGETS)
     if not targets or len(set(targets)) != len(targets) or set(targets) - set(TARGETS):
         raise ValueError("Choose distinct supported mice")
@@ -270,7 +268,7 @@ def main(args):
         selected_path = directory / "checkpoint.pt"
         save_checkpoint(selected_path, dict(model=cpu_tree(model.state_dict()), identity=identity, mouse=mouse,
                                            source_identity=metadata["identity"], source_step=selection["step"],
-                                           scale=1.0, selected_epoch=state["best"]["epoch"], epochs_run=state["epoch"],
+                                           selected_epoch=state["best"]["epoch"], epochs_run=state["epoch"],
                                            optimizer="adam", adam_lr=args.lr, seed=seed,
                                            training_fingerprint=training.fingerprint,
                                            validation_fingerprint=validation.fingerprint,
@@ -279,8 +277,7 @@ def main(args):
         # The test partition is first materialized after CNN epoch selection is finished.
         for role, values in (("val", validation), ("test", store.load(mouse, "test"))):
             buffers = cpu_tree(dict(model.named_buffers()))
-            predictions = predict(model, values, 1.0, config.batch_size, device,
-                                  frontend_batch_size=config.frontend_batch_size)
+            predictions = predict(model, values, config.batch_size, device)
             score, positive = prediction_metrics(values.labels, predictions)
             if any(not torch.equal(value.cpu(), buffers[key]) for key, value in model.named_buffers()):
                 raise ValueError("Inference changed BatchNorm buffers")

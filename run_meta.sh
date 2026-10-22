@@ -8,18 +8,18 @@ fi
 action="${1:-help}"
 if [[ "$action" == help || "$action" == --help || "$action" == -h ]]; then
     cat <<'HELP'
-Usage: bash run_meta.sh [prepare|train|validate|test|check] [OPTIONS]
+Usage: bash run_meta.sh [prepare|train|query|valid|test] [OPTIONS]
   No arguments: train with configs/meta.json in a detached Docker container.
   Output is appended to run.log in the project directory.
   Training runs detached by default; other subcommands run in the foreground.
 
   prepare    Verify raw recordings and source annotation alignment
-  train      Run meta, pooled, or standalone log-STFT training
-  validate   Replay query (Day 8) and valid (Day 11) metrics separately
+  train      Run waveform frontend meta-training
+  query      Replay configured query-day metrics
+  valid      Replay independent selection-day metrics
   test       Replay held-out test on Days 12/13 (also scored during training)
-  check      Run unit and synthetic integration tests
 
-Train options: --config configs/meta.json --algorithm meta|pooled|log_stft
+Train options: --config configs/meta.json
                --steps N --targets X1,... --resume --plan-only
 Launcher options: --device auto|cuda|cpu --dry-run --foreground
 Environment: DATA_DIR, CACHE_DIR, PREPARED_DIR, OUTPUT_DIR, IMAGE_NAME,
@@ -28,7 +28,7 @@ HELP
     exit 0
 fi
 shift
-case "$action" in prepare|train|validate|test|check) ;; *) echo "Unknown action: $action" >&2; exit 2 ;; esac
+case "$action" in prepare|train|query|valid|test) ;; *) echo "Unknown action: $action" >&2; exit 2 ;; esac
 background=false
 [[ "$action" != train ]] || background=true
 log_file="$project_dir/run.log"
@@ -65,7 +65,7 @@ command_args=(docker run --rm --init --shm-size=1g
     -w /workspace -v "$project_dir:/workspace:ro"
     -v "$data_dir:/data/MouseLFP:ro" -v "$cache_dir:/cache"
     -v "$prepared_dir:/prepared:$prepared_mode" -v "$output_dir:/output")
-if [[ "$action" == train || "$action" == validate || "$action" == test ]]; then
+if [[ "$action" == train || "$action" == query || "$action" == valid || "$action" == test ]]; then
     if [[ "$device" == cuda || "$device" == cuda:* ]] || { [[ "$device" == auto ]] && command -v nvidia-smi >/dev/null; }; then
         command_args+=(--gpus all)
     fi
@@ -81,12 +81,10 @@ case "$action" in
     prepare) command_args+=(python prepare.py --data-dir /data/MouseLFP --output /prepared "${arguments[@]}") ;;
     train) command_args+=(python train.py --data-dir /data/MouseLFP --prepared-dir /prepared
                --cache-dir /cache --run-dir /output --device "$device" "${arguments[@]}") ;;
-    validate|test)
-        split=validation
-        [[ "$action" != test ]] || split=test
+    query|valid|test)
+        split="$action"
         command_args+=(python evaluate.py --data-dir /data/MouseLFP --prepared-dir /prepared
             --cache-dir /cache --run-dir /output --device "$device" --split "$split" "${arguments[@]}") ;;
-    check) command_args+=(python -m unittest discover -s tests -v "${arguments[@]}") ;;
 esac
 if "$dry_run"; then
     printf '%q ' "${command_args[@]}"

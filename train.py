@@ -1,4 +1,4 @@
-"""Train a cross-day meta-learner or its matched pooled baseline."""
+"""Train the cross-day waveform frontend with meta-learning."""
 
 from meta_learning.cli import train_main
 

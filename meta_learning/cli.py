@@ -25,17 +25,16 @@ def data_arguments(parser):
 
 
 def train_main():
-    parser = argparse.ArgumentParser(description="Train a meta-learner, pooled control, or standalone log-STFT baseline")
+    parser = argparse.ArgumentParser(description="Train the waveform frontend with meta-learning")
     data_arguments(parser)
     parser.add_argument("--config", type=Path, default=ROOT / "configs" / "meta.json")
-    parser.add_argument("--algorithm", choices=["meta", "pooled", "log_stft"])
     parser.add_argument("--steps", type=int, help="Override the finite outer-step budget")
     parser.add_argument("--targets", type=parse_targets)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--plan-only", action="store_true", help="Audit fixed support/query tasks without reading waveforms or training")
     args = parser.parse_args()
     config = Config.load(args.config).to_dict()
-    for name, value in [("algorithm", args.algorithm), ("outer_steps", args.steps), ("targets", args.targets)]:
+    for name, value in [("outer_steps", args.steps), ("targets", args.targets)]:
         if value is not None:
             config[name] = value
     config = Config.from_dict(config)
@@ -57,8 +56,6 @@ def train_main():
                                  test_split="test", test_days=sorted(splits["test"].table.day.unique().tolist()),
                                  test_samples=len(splits["test"].labels))]
         counts, weights = query_task_weights(queries, episodes)
-        if config.algorithm == "log_stft":
-            weights = {mouse: 0.0 for mouse in config.targets}
         for mouse in tasks:
             tasks[mouse][0].update(query_events=counts[mouse], outer_weight=weights[mouse])
         write_json(args.run_dir / "episodes.json", tasks)
@@ -77,8 +74,8 @@ def train_main():
 def evaluate_main():
     parser = argparse.ArgumentParser(description="Replay query, valid, or test using selected checkpoints; no fitting")
     data_arguments(parser)
-    parser.add_argument("--split", choices=["query", "valid", "test", "validation"], default="test",
-                        help="query: outer-training days; valid: checkpoint-selection days; test: held-out days (default); validation: legacy alias replaying query and valid separately")
+    parser.add_argument("--split", choices=["query", "valid", "test"], default="test",
+                        help="query: outer-training days; valid: checkpoint-selection days; test: held-out days (default)")
     args = parser.parse_args()
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, args.run_dir / "data")
     result = evaluate_run(store, args.run_dir, resolve_device(args.device), args.split)

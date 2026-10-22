@@ -29,16 +29,14 @@ def support_features(model, training, config, rng, device):
     return torch.cat(features), torch.cat(labels)
 
 
-def adapt_model(initial, training, config, device, seed, *, return_diagnostics=False, progress=None):
+def adapt_model(initial, training, config, device, seed, *, progress=None):
     if training.split != "train" or not training.table.day.between(0, 7).all():
         raise ValueError("Adaptation may only use Days 0-7")
     model = copy.deepcopy(initial).to(device)
-    # Never transfer learned classifier weights, including the pooled control's
-    # auxiliary head. Only preprocessing is shared between mice and stages.
+    # Only the frontend is shared between mice; every fit starts from a fresh CNN.
     model.reset_classifier(config.seed)
     model.frontend.requires_grad_(False)
     model.cnn.requires_grad_(True)
-    scale = training.scale()
     # Validation checkpointing cannot change subsequent meta-training RNG draws. The support
     # policy (fixed windows, or K seeded random crops per event and class) is shared with meta inner fits.
     with torch.random.fork_rng():
@@ -50,18 +48,17 @@ def adapt_model(initial, training, config, device, seed, *, return_diagnostics=F
         model.cnn.load_state_dict(dict(fit.parameters, **fit.buffers))
         fit.report.update(support_crops=config.support_crops if crops_support(config) else 0,
                           support_crop_unit="per_event_per_class" if crops_support(config) else None)
-    result = model.eval(), scale
-    return (*result, fit.report) if return_diagnostics else result
+    return model.eval(), fit.report
 
 
-def predict(model, split, scale, batch_size, device, *, frontend_batch_size=None):
+def predict(model, split, batch_size, device):
     model.eval()
-    frontend_batch_size = frontend_batch_size or getattr(model.frontend, "batch_size", batch_size)
+    frontend_batch_size = model.frontend.batch_size
     result = []
     with torch.inference_mode():
         for start in range(0, len(split.labels), frontend_batch_size):
             indices = np.arange(start, min(start + frontend_batch_size, len(split.labels)))
-            inputs, _ = split.batch(indices, scale, device)
+            inputs, _ = split.batch(indices, device)
             features = model.frontend(inputs)
             for batch in features.split(batch_size):
                 result.append(model.cnn(batch).softmax(dim=1).cpu().numpy())

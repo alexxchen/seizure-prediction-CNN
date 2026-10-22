@@ -46,16 +46,9 @@ class FeatureSplit:
                             self.table.iloc[indices].reset_index(drop=True), self.crop_segments,
                             self.crop_max_offsets, contexts, self.negative_pool)
 
-    def scale(self, indices=None):
-        # Preserve waveform amplitude before the neural frontend.
-        # Retain the saved-scale interface for personalization and inference.
-        return 1.0
-
-    def batch(self, indices, scale, device):
+    def batch(self, indices, device):
         if self.inputs is None:
             raise ValueError("Fixed-window inference requires DataStore.load, not load_crops")
-        if scale != 1.0:
-            raise ValueError("Waveform frontends require identity normalization")
         values = np.array(self.inputs[indices], dtype=np.float32, copy=True)
         labels = np.array(self.labels[indices], dtype=np.int64, copy=True)
         return torch.from_numpy(values).to(device), torch.from_numpy(labels).to(device)
