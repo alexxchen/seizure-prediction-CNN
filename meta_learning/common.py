@@ -1,6 +1,7 @@
 """Serialization, provenance, deterministic execution, and binary metrics."""
 
 import hashlib
+import importlib.metadata
 import json
 import random
 from pathlib import Path
@@ -53,6 +54,13 @@ def resolve_device(value):
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable; select --device cpu")
     return device
+
+
+def runtime_identity(device):
+    return dict(packages={name: importlib.metadata.version(name) for name in
+                          ["torch", "numpy", "scipy", "pandas", "scikit-learn", "pyarrow"]},
+                device=str(device), cuda=torch.version.cuda, cpu_threads=torch.get_num_threads(),
+                gpu=torch.cuda.get_device_name(device) if device.type == "cuda" else None)
 
 
 def validate_sample_table(rows, dataset, target, split):

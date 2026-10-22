@@ -3,19 +3,19 @@
 import torch
 from torch import nn
 
-from meta_learning.frontend import WaveformFrontend
+from meta_learning.frontend_contract import Frontend, CNN_INPUT_SHAPE
 from models.cnn import SeizureCNN
 
 
 class MetaModel(nn.Module):
     def __init__(self, cnn_seed=0, frontend_batch_size=32):
         super().__init__()
-        self.frontend = WaveformFrontend(seed=cnn_seed, batch_size=frontend_batch_size)
+        self.frontend = Frontend(seed=cnn_seed, batch_size=frontend_batch_size)
         self.cnn = self._new_classifier(cnn_seed)
 
     def cnn_input_shape(self):
-        """The 1-D CNN consumes (channels, time); both follow the attached frontend."""
-        return tuple(self.frontend.output_shape)
+        """Keep classifier architecture and reference weights identical across candidates."""
+        return CNN_INPUT_SHAPE
 
     def _new_classifier(self, seed):
         """Initialize one CPU classifier without advancing caller CPU/CUDA RNGs."""

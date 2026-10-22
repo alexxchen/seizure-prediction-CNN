@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "editable": [
+    "meta_learning/frontend.py"
+  ],
+  "objective": "minimum_test_mouse_mean_log_loss",
+  "fixed_sha256": {
+    "AGENTS.md": "00659c8d4f8937d3b636dc743212ac8e1f4927c6c6f16151e4f9601e8c5491b4",
+    "Dockerfile": "0bbe4173a659c5106d7f85c12e7843a7f3850dd682b4c2419d102018b6b29ae7",
+    "SETTINGS_MouseLFP.json": "284b6dfc1f34a253c68397ebf7e21b6fcc024fad218fb02a357e6a217551bc64",
+    "configs/meta.json": "6ec64c07622e2f0facf59d1e6c51760d5c3d647cd49c16f55a4e598b42d3644c",
+    "evaluate.py": "c219c12657295af2b451396756db9f343fdbcb0f31d30490b52a8ef843227f5b",
+    "meta_learning/__init__.py": "55dffe1474531f59c55668f69d74570605303ba03c2bf0704887e17ea52d707f",
+    "meta_learning/adaptation.py": "c2c3ff3082eb4e5c97360a6bab3be97897d3b9a63cb8680794ad79b84e8d2c51",
+    "meta_learning/algorithms.py": "c1c3d41d9d2e20546718b0a6e04299052a9da8f232cc152cedcd3a0462c64017",
+    "meta_learning/cli.py": "efe524570e061b25cb530cdf2453b57a598f11187eb09614bbddff61ee99d525",
+    "meta_learning/common.py": "c092352dfda2d5a7d50c8d5e06cb6a5d02efba4d63cc2c9cdeaf651749987a6b",
+    "meta_learning/config.py": "bfb89f33dba1bdff945974cf22a66e617a90edc170788b4bace8c27375235bc9",
+    "meta_learning/crops.py": "90bcb634dfdcc32f07fa8323d58c8b5c0673b97c38f3ed3ce81a58a386cb1807",
+    "meta_learning/data.py": "87e97f6c6cd51a2b78380180f4188b0359e66490d1f7facb6a306da2ef7bf9b9",
+    "meta_learning/engine.py": "d7a09afa7e6d78a801ec241f0aa032e44f2e7f5c459fca7510339097a76e75b6",
+    "meta_learning/episodes.py": "d5ac3a82e6e2c16ec10091b0de1f1658574551eb28a7f61e2047d55edd5c30c9",
+    "meta_learning/frontend_contract.py": "59110cf9de7a385fadeba5bf54c1ccd8fb8453c4d218c1ca17fe69d205ac8772",
+    "meta_learning/inner.py": "8eb92bb4ba8feae26680764825954d4f880325a639973f600d72d08093f1a70b",
+    "meta_learning/model.py": "2dc1b8e5b1d10747e4eb32e672e0ff5b45acc8390867e2924b09c30dd59aa0d3",
+    "meta_learning/plotting.py": "281ce4e7273e6ab463776372d30bfb1c009b6f4a80d7a49b701ed5fc258d0b93",
+    "meta_learning/waveform.py": "e600a0e2388493b29fb56a94b4c251e9ddeece87eac875ea68943d5871e068fc",
+    "models/__init__.py": "8da65f20eccafa43086b5dc745083332dd432cb3efa522bc5b9177ee14e6c5f3",
+    "models/cnn.py": "43810ef08aec59fa29aa5476f68ac1166b2acf3c7084a7c98ae275a38dae2fc8",
+    "prepare.py": "1d863d71a76e5644883e7af358bf898f7401a196ade66332f14d167f2d0aa86b",
+    "program.md": "9c8d424c79334c7f313806422b846d18ce78212b28aaa46c7050cdb2479f2996",
+    "requirements.txt": "0a09f96a3c32d3c2c7b91248cac91ca6de0fae2c45f38269492b3eb5d1ee2bf1",
+    "research.py": "d9e3eec7d2855cf96aa7c3be0532f7cb8c64ac1ae285f32f98da82b33a7ddb8f",
+    "run_meta.sh": "178696be36003720799c87ebe4856490bf2e7c64cac1f418626b1ef7f8fcb133",
+    "run_research.sh": "9cce5954dccf84a3e592a52a354e83bac31c06d2338236929b9f1259ae839e16",
+    "sample_pipeline.py": "246818ea2fb42dd56d773222dfe27429b27f5ee8f6ff9acc4119d18fed7cf11a",
+    "scripts/fit_frontend_adam.py": "42fe306829c08f79166cb69da7817a136f4d63034adc96cb6deac428542bfd8c",
+    "scripts/plot_frontend_tsne.py": "47834f199b99d51d8d5269d89207c60d2bf37900cb82ccda42950b3bbb37263c",
+    "source_data.py": "b34cc30e487feafbfe98192ddb1b3ca52b4549ce43373389a8dd94dea9bd6e4e",
+    "train.py": "94410ecd55163c985ebf9e46d9c7e74b2e3f318bd799236657826a5dd5620d9f"
+  }
+}

@@ -1,6 +1,49 @@
-# MouseLFP waveform frontend meta-learning
+# MouseLFP frontend autoresearch
 
 Learn a shared waveform frontend for predicting seizure-related labels across recording days of the same mouse. Only frontend weights receive outer updates. Every task and per-mouse evaluation fits a fresh CNN from a fixed, unlearned reference.
+
+## Autoresearch workflow
+
+This branch adapts `seizure-single-channel-auto-research` to shared-frontend meta-learning. The research agent edits only `meta_learning/frontend.py`; the task CNN, fixed reference initialization, SGD fitting, outer solver, data/crops, budgets, and evaluation code are locked. The frontend's entire internal design is editable, including learned or spectral transforms, architecture, sample-local normalization, and initialization. Its output must remain `(N, 64, 56)` so the CNN's architecture and seeded starting weights stay identical.
+
+**Objective: minimize the equal-mouse-mean test log loss on Days 12/13.** The user explicitly designated these days as a development set for frontend research. Accuracy at threshold 0.5, AUC, sensitivity, and specificity are supporting metrics. Each candidate first selects its checkpoint by the existing query/valid log-loss rule; the candidate's development-test score at that checkpoint controls `keep`/`discard`. Test labels never supply training gradients, CNN updates, or within-run checkpoint selection. The first successful baseline is kept; subsequent loss must be strictly lower. Search results and final replay are development results, not an untouched generalization estimate.
+
+Read `program.md` for the agent loop. Editing this scaffold does not start training. Experiments require a separately requested finite job or candidate count.
+
+```bash
+./run_research.sh check
+./run_research.sh prepare
+export OUTPUT_DIR="$PWD/autoresearch-runs/frontend-study"
+./run_research.sh experiment --description 'baseline waveform ResNet' > baseline.log 2>&1
+# Edit only meta_learning/frontend.py, then run another explicit finite job.
+./run_research.sh experiment --description 'frontend hypothesis' > candidate.log 2>&1
+./run_research.sh restore
+./run_research.sh replay --split test
+./run_research.sh finalize
+```
+
+All research commands run in the foreground. `--dry-run` prints a launcher command without creating directories or running Docker. `--timeout-seconds` defaults to 86,400 seconds per candidate attempt; it is a failure watchdog, never early stopping. The configured 100 outer steps and 40 complete inner epochs remain unchanged. Use a new session for a different protocol, source inventory, runtime, or watchdog. A study uses the four configured mice X1/X2/X9/X14; do not silently expand to seven.
+
+`protocol.lock.json` checks fixed file hashes and rejects extra executable modules in controlled directories. Synthetic `check` verifies waveform/output shape, initialization RNG preservation, reproducibility, silence, sample/chunk independence, persistent state, and frontend gradients. These checks detect common implementation mistakes; candidates are trusted research code and the checks are not a security sandbox.
+
+Each candidate executes an immutable copied source tree, so later working-tree edits cannot change a running experiment. Artifacts include `session.json`, `results.tsv`, `best.json`, `experiments/<id>/experiment.json`, `snapshot.json`, `contract.log`, `train.log`, `result.json`, immutable per-attempt records in `attempts/`, and the training artifacts described below. The ledger records both query/valid selection metrics and development-test metrics. Crashes preserve snapshots, logs, and checkpoints. Resume the same candidate from its saved source with:
+
+```bash
+./run_research.sh experiment --resume <experiment-id>
+```
+
+`restore` backs up the current frontend before restoring only that file from the best snapshot. `replay --split query|valid|test` uses the best candidate's saved code and saved CNN/BatchNorm weights without fitting. `finalize` replays the best test score and seals the study against further experiments. Finalization does not provide a new held-out dataset.
+
+Local equivalents use the existing pinned dependencies:
+
+```bash
+python research.py check
+python research.py experiment --run-dir autoresearch-runs/local --data-dir /path/to/raw \
+  --prepared-dir /path/to/prepared --cache-dir /path/to/cache --device cuda --description baseline
+python -m unittest discover -s tests -v
+```
+
+The remaining sections describe the fixed trainer and the initial frontend baseline. Architectural statements about this baseline do not restrict subsequent frontend candidates.
 
 ## Data and roles
 
@@ -11,7 +54,7 @@ Supported mice are X1/X2/X4/X9/X10/X14/X15. The current configuration trains X1/
 | Support | 0-7 | Inner CNN updates and support-only BatchNorm calibration |
 | Query | 8/11 | Outer frontend gradients and current checkpoint selection |
 | Valid | Optional disjoint subset of Days 8/11 | Checkpoint selection only |
-| Test | 12/13 | Inference and reporting only |
+| Test (development) | 12/13 | Inference within each run; frontend candidate ranking across runs |
 
 `query_validation_days` chooses query days. `selection_validation_days=null` reuses query loss for checkpoint selection, so the current setup has no independent validation score. For independent selection, use disjoint lists such as query `[8]` and selection `[11]`. The source/cache partition named `validation` contains both days; public metric roles are `query`, `valid`, and `test`.
 
@@ -48,7 +91,7 @@ The task CNN convolves time, mixing feature channels directly: AxisBatchNorm -> 
 3. Query labels supervise the frontend through both the query features and every support-training update. Average query loss within each represented event, then across events. Weight each mouse's gradient by its eligible positive query-event count divided by the total count, before crop expansion and optional per-class caps. Update the frontend once after all tasks.
 4. Outer AdamW uses `outer_lr`; decoupled `outer_weight_decay` applies only to frontend weight matrices, excluding biases and normalization parameters. `inner_weight_decay` adds an L2 pull toward detached reference CNN weights after inner gradient clipping.
 5. At every `eval_every` interval and the final step, freeze the frontend and fit one fresh CNN per mouse with the same support policy, SGD solver, and epoch budget. Score query, optional valid, and test without gradients.
-6. Select the checkpoint with minimum mouse-mean predictive log loss on valid days, or query days when no separate valid days are configured. Test never selects weights. Outer training uses label smoothing; selection uses ordinary unsmoothed predictive log loss.
+6. Select the checkpoint with minimum mouse-mean predictive log loss on valid days, or query days when no separate valid days are configured. Test never selects checkpoints within a run; autoresearch uses the selected checkpoint's test loss to rank frontend candidates. Outer training uses label smoothing; selection uses ordinary unsmoothed predictive log loss.
 
 Support training uses normal CNN BatchNorm batch statistics and task-local running means/variances. Query/test use eval mode. Each fit ends with exact full-support BatchNorm recalibration using the final weights (`batchnorm_recalibration=true`); this is differentiable in the meta path. The full support-only EMA trajectory and recalibration contribute to the hypergradient. Query inference and backward replay never mutate saved/reference statistics.
 
@@ -124,7 +167,7 @@ python scripts/plot_frontend_tsne.py --run-dir results/new-run --prepared-dir /p
 python scripts/fit_frontend_adam.py --source-run results/new-run --run-dir results/adam-personalization/new-run --epochs 100 --lr 0.001 --device cuda
 ```
 
-The Adam job saves replayable weights, optimizer moments, shuffle RNG, histories, and selected validation predictions. Resume requires matching budgets, configuration, and source snapshots.
+This separate Adam experiment is outside the locked autoresearch workflow. The Adam job saves replayable weights, optimizer moments, shuffle RNG, histories, and selected validation predictions. Resume requires matching budgets, configuration, and source snapshots.
 
 ## Artifacts
 
@@ -132,7 +175,7 @@ The Adam job saves replayable weights, optimizer moments, shuffle RNG, histories
 - `episodes.json`, `data/X*/`: event counts, task weights, partition/sample tables, fingerprints, class ratios, and covered quality audits.
 - `history.json`, `inner/step-*/task-*.json`: outer/query metrics, fixed epoch counts, inner optimizer steps, and measured support diagnostics.
 - `checkpoints/last.pt`, `status.json`: resumable training state and completion/interruption status.
-- `query/`, optional `valid/`, `test/`: per-evaluation reports; test metrics never control selection.
+- `query/`, optional `valid/`, `test/`: per-evaluation reports; test metrics never control within-run checkpoint selection.
 - `selection.json`, `selected/step-*/`: selected frontend and per-mouse CNN/BatchNorm weights, predictions and metrics.
 - `convergence.png`, `convergence.svg`: support/query/valid/test accuracy curves from the same support-only fits.
 - `evaluation/<role>/`: inference-only replay outputs.

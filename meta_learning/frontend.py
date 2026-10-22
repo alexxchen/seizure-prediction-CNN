@@ -7,7 +7,6 @@ ResNet with strided downsampling maps each preprocessed waveform to a
 
 import torch
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 
 from meta_learning.waveform import WAVEFORM_CONFIG
 
@@ -65,11 +64,8 @@ class WaveformFrontend(nn.Module):
 
     output_shape = (FRONTEND_CONFIG["output_channels"], FRONTEND_CONFIG["time_bins"])
 
-    def __init__(self, seed=0, batch_size=32):
+    def __init__(self, seed=0):
         super().__init__()
-        if type(batch_size) is not int or batch_size < 1:
-            raise ValueError("Frontend batch size must be a positive integer")
-        self.batch_size = batch_size
         c = FRONTEND_CONFIG
         # Initialize CPU layers without advancing caller CPU/CUDA RNG streams,
         # keeping the reference task CNN unchanged when the frontend is replaced.
@@ -87,33 +83,10 @@ class WaveformFrontend(nn.Module):
             self.head = nn.Sequential(nn.GroupNorm(c["norm_groups"], width), nn.GELU(),
                                       nn.Conv1d(width, c["output_channels"], 1))
 
-    def decay_parameters(self):
-        """Weight matrices that receive decoupled weight decay (not biases or norms)."""
-        return [parameter for parameter in self.parameters() if parameter.ndim > 1]
-
-    def describe(self):
-        with torch.no_grad():
-            state = {name: float(parameter.norm()) for name, parameter in self.named_parameters()
-                     if name.endswith("weight") and parameter.ndim > 1}
-        return dict(FRONTEND_CONFIG, checkpoint_batch_size=self.batch_size,
-                    parameters=sum(parameter.numel() for parameter in self.parameters()),
-                    state=dict(weight_norms=state))
-
-    def _forward_batch(self, waveform):
+    def forward(self, waveform):
+        check_waveform(waveform)
         c = FRONTEND_CONFIG
         features = self.head(self.body(rms_normalize_waveform(waveform).unsqueeze(1)))
         if features.shape[2] != c["time_bins"]:
             raise ValueError("Convolution strides do not produce the configured time bins")
         return features
-
-    def forward(self, waveform):
-        check_waveform(waveform)
-        outputs = []
-        differentiable = torch.is_grad_enabled() and (
-            waveform.requires_grad or any(parameter.requires_grad for parameter in self.parameters()))
-        for batch in waveform.split(self.batch_size):
-            # Non-reentrant checkpointing also supports autograd.grad and inputs
-            # without requires_grad. It recomputes all activations exactly.
-            outputs.append(checkpoint(self._forward_batch, batch, use_reentrant=False)
-                           if differentiable else self._forward_batch(batch))
-        return torch.cat(outputs)

@@ -75,7 +75,7 @@ def evaluate_main():
     parser = argparse.ArgumentParser(description="Replay query, valid, or test using selected checkpoints; no fitting")
     data_arguments(parser)
     parser.add_argument("--split", choices=["query", "valid", "test"], default="test",
-                        help="query: outer-training days; valid: checkpoint-selection days; test: held-out days (default)")
+                        help="query: outer-training days; valid: checkpoint-selection days; test: development Days 12/13 (default)")
     args = parser.parse_args()
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, args.run_dir / "data")
     result = evaluate_run(store, args.run_dir, resolve_device(args.device), args.split)

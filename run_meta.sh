@@ -17,7 +17,7 @@ Usage: bash run_meta.sh [prepare|train|query|valid|test] [OPTIONS]
   train      Run waveform frontend meta-training
   query      Replay configured query-day metrics
   valid      Replay independent selection-day metrics
-  test       Replay held-out test on Days 12/13 (also scored during training)
+  test       Replay development-test on Days 12/13 (also scored during training)
 
 Train options: --config configs/meta.json
                --steps N --targets X1,... --resume --plan-only

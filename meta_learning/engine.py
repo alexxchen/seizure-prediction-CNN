@@ -1,7 +1,6 @@
 """Finite training, exact checkpoint resumption, model selection, and inference."""
 
 import contextlib
-import importlib.metadata
 import json
 import random
 import subprocess
@@ -11,11 +10,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from meta_learning.frontend import FRONTEND_CONFIG, WaveformFrontend
+from meta_learning.frontend import FRONTEND_CONFIG
+from meta_learning.frontend_contract import CNN_INPUT_SHAPE
 from meta_learning.waveform import WAVEFORM_CONFIG
 from meta_learning.adaptation import adapt_model, predict
 from meta_learning.algorithms import meta_objective
-from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json
+from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json, runtime_identity
 from meta_learning.config import Config
 from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch, query_task_weights
 from meta_learning.model import MetaModel
@@ -32,13 +32,6 @@ def source_hashes():
              "SETTINGS_MouseLFP.json", "run_meta.sh"]]
     paths += list((ROOT / "meta_learning").glob("*.py")) + list((ROOT / "models").glob("*.py"))
     return {str(path.relative_to(ROOT)): file_hash(path) for path in sorted(paths)}
-
-
-def runtime_identity(device):
-    return dict(packages={name: importlib.metadata.version(name) for name in
-                          ["torch", "numpy", "scipy", "pandas", "scikit-learn", "pyarrow"]},
-                device=str(device), cuda=torch.version.cuda, cpu_threads=torch.get_num_threads(),
-                gpu=torch.cuda.get_device_name(device) if device.type == "cuda" else None)
 
 
 def cpu_state(model):
@@ -79,9 +72,9 @@ def validation_roles(config):
 
 def selection_criterion(config):
     if config.selection_validation_days is None:
-        return "Minimum mean query log loss; test metrics are reporting only"
+        return "Minimum mean query log loss; test metrics do not select checkpoints within this run"
     return (f"Minimum mean log loss on valid Days {list(config.selection_validation_days)}, disjoint from "
-            f"query Days {list(config.query_validation_days)}; test metrics are reporting only")
+            f"query Days {list(config.query_validation_days)}; test metrics do not select checkpoints within this run")
 
 
 def report_roles(report):
@@ -185,15 +178,15 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                        query=f"outer-training query Days {list(config.query_validation_days)}",
                                        valid=(None if config.selection_validation_days is None else
                                                   f"checkpoint-selection valid Days {list(config.selection_validation_days)}"),
-                                       test="held-out test Days 12/13"),
+                                       test="development-test Days 12/13; inference within run, candidate ranking in autoresearch"),
                       selection_criterion=selection_criterion(config),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
-                                       "on frontend weight matrices; frontend biases and GroupNorm undecayed"),
+                                       "on frontend weight matrices; frontend biases and normalization parameters undecayed"),
                       runtime=runtime_identity(device), sample_config=sample_pipeline.SAMPLE_CONFIG,
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),
                       waveform_config=WAVEFORM_CONFIG,
                       frontend_config=dict(FRONTEND_CONFIG, checkpoint_batch_size=config.frontend_batch_size),
-                      day_splits=DAY_SPLITS, cnn_input_shape=list(WaveformFrontend.output_shape),
+                      day_splits=DAY_SPLITS, cnn_input_shape=list(CNN_INPUT_SHAPE),
                       cnn="1-D CNN: three Conv1d/AxisBatchNorm/max-pool stages (16, 32, 64), flatten, dense 128, 2 logits",
                       task_schedule=dict(mice="Every configured mouse exactly once per outer step",
                                          mouse_order=list(config.targets),
@@ -201,7 +194,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                          episodes="One fixed support/query task per mouse",
                                          gradient_reduction="Sum of mouse gradients weighted by eligible query-event counts",
                                          query_events=query_events, outer_task_weights=task_weights),
-                      normalization="Per-window RMS inside the frontend; no fitted dataset/task statistics",
+                      normalization=FRONTEND_CONFIG["input_normalization"],
                       batchnorm=("Support batch statistics during training; query/test use exact support statistics of the final "
                                  "weights, recalibrated differentiably after each fit" if config.batchnorm_recalibration else
                                  "Support batch statistics and per-task running EMA; query/test use frozen support EMA; full EMA hypergradient"),
