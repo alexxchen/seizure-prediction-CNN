@@ -1,7 +1,7 @@
 {
   "targets": ["X1","X2","X9","X14"],
   "seed": 0,
-  "outer_steps": 100,
+  "outer_steps": 50,
   "inner_epochs": 40,
   "inner_checkpoint_steps": 20,
   "inner_log_every": 0,

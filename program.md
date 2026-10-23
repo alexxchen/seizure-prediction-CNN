@@ -1,143 +1,105 @@
-# Frontend autoresearch
+# autoresearch
 
-Explore which shared frontend gives the best development-test performance with
-the fixed meta-learning task CNN. Read README.md and AGENTS.md first.
+This experiment lets an LLM search for a better waveform frontend for seizure prediction.
 
-## Authorization and setup
+## Setup
 
-Building this scaffold does not authorize training. Start research only after the
-user requests a finite number of candidates or an explicit finite training job.
-Honor that count and stop requests. Never start an unbounded experiment loop.
+To start a study:
 
-1. Inspect the branch and working tree. Use `meta-learning/auto-research` or a
-   dedicated study branch based on it. Preserve unrelated work and old artifacts.
-2. Read `meta_learning/frontend.py`, `frontend_contract.py`, `model.py`,
-   `models/cnn.py`, `configs/meta.json`, `research.py`, and `protocol.lock.json`.
-   Only `meta_learning/frontend.py` may change between candidates.
-3. Run `./run_research.sh check`. Review the actual coverage of these synthetic
-   checks; they do not audit private recordings or prove absence of leakage.
-4. Choose a fresh `OUTPUT_DIR="$PWD/autoresearch-runs/<study>"`. Prepare sources
-   with `./run_research.sh prepare` if the version-3 source inventory is missing.
-   Do not reuse old single-channel or other-protocol research sessions.
-5. Establish a baseline with the current frontend before any candidate edits.
-   Every candidate uses the exact current `configs/meta.json`: X1/X2/X9/X14,
-   100 outer steps, 40 inner/per-mouse epochs, batch sizes 64/64, support/query
-   crops 4/64, and the other explicit JSON overrides documented in README.md.
+1. **Choose a run tag and budget**: use a short tag such as `oct22`. Training needs a user-requested finite candidate count or explicit finite job. Editing the scaffold alone does not authorize training.
+2. **Set up the branch and directory**: use `meta-learning/auto-research` or a dedicated study branch based on it. Inspect the working tree and preserve unrelated changes. Set `export OUTPUT_DIR="$PWD/autoresearch-runs/<tag>"` and run `mkdir -p "$OUTPUT_DIR"`. Use a fresh directory.
+3. **Read the in-scope files**:
+   - `README.md` and `AGENTS.md` — project context and fixed research rules.
+   - `meta_learning/frontend.py` — the file you modify.
+   - `meta_learning/frontend_contract.py`, `meta_learning/model.py`, and `models/cnn.py` — candidate interface, wrapper, and fixed CNN.
+   - `configs/meta.json` — training controls and budget.
+   - `research.py`, `run_research.sh`, and `protocol.lock.json` — execution, evaluation, logging, and locked files.
+4. **Check the data**: verify that the version-3 source inventory exists. Run `./run_research.sh prepare` if it is missing. Preserve private recordings, annotations, caches, and old sessions.
+5. **Check the setup**: run `./run_research.sh check`. The engine creates `results.tsv` and `best.json` when experiments run; leave their contents to the engine.
+6. **Start the authorized job**: keep the same output directory, configuration, dependencies, runtime, and watchdog for the study. A changed protocol requires separate review, a fresh session, and a new baseline.
 
-## Editable frontend
+## Experimentation
 
-All frontend internals are open: convolutional or other differentiable
-architectures, width/depth, receptive fields, spectral transforms, nonlinearities,
-sample-local normalization, and random initialization. The initial 131,296-parameter
-RMS/GroupNorm ResNet is a baseline, not the allowed architecture family.
+Each candidate runs the **fixed training budget in `configs/meta.json`**. Launch it with `./run_research.sh experiment --description 'your idea'`. The launcher runs in the foreground using an immutable source snapshot. Read the actual JSON before starting and preserve its explicit overrides: inner/per-mouse fitting uses 40 complete epochs, overriding the Config default of 50. The remaining overrides are documented in README.md.
 
-Keep the public candidate interface:
+**What you CAN do:**
 
-```python
-FRONTEND_CONFIG = {"architecture": "...", "input_normalization": "..."}
+- Modify `meta_learning/frontend.py` — the only candidate file. Explore architecture, width, depth, kernels, spectral transforms, nonlinearities, sample-local normalization, and initialization. The initial RMS/GroupNorm ResNet is the baseline; all frontend internals are open.
 
-class WaveformFrontend(torch.nn.Module):
-    def __init__(self, seed=0):
-        ...  # CPU initialization; reproducible from seed; no external weights
+**What you CANNOT do:**
 
-    def forward(self, waveform):
-        ...  # (N, 28672) -> finite (N, 64, 256)
+- Modify fixed files or refresh `protocol.lock.json` to admit a candidate. Keep the CNN, training loop, optimizer controls, sample/crop policy, RNG, and evaluation unchanged.
+- Install packages, add files, change dependencies, or load external weights.
+- Use dropout, cross-sample or fitted statistics, mutable state, labels, recording metadata, filesystem/data access, training/evaluation imports, or detached learned operations inside the candidate.
+- Change data roles or selection rules. Support Days 0-7 alone fit each fresh CNN and its BatchNorm statistics. Query Days 8/11 supply outer gradients; optional disjoint valid days supply selection only. Test Days 12/13 supply inference and cross-candidate scores. Every outer step includes every configured mouse once with the fixed query-event weighting. Preserve full hypergradients, SGD epochs, final support BatchNorm recalibration, and outer AdamW.
+
+Keep `WaveformFrontend(seed=0)` and the JSON-serializable `FRONTEND_CONFIG`. Accept centered/resampled/padded waveforms `(N, 28672)`; emit `(N, 64, 256)` for the fixed three-block, 32-channel CNN. Features must be deterministic, sample-local, stateless, differentiable in waveform and learned parameters, finite for silence, and independent of chunk size and train/eval mode. Put additional transforms inside the frontend; the fixed wrapper handles RNG isolation and chunking.
+
+**The goal: get the lowest `test_loss`.** Score equal-mouse-mean predictive log loss on Days 12/13 at the run's query/valid-selected checkpoint. The first successful baseline is kept. A later candidate is kept only when loss is strictly lower; ties discard. Report accuracy at threshold 0.5 alongside loss. Test scores rank completed candidates; they never select checkpoints within a run. These days are the user-designated development set, so search and final replay report development performance.
+
+**VRAM**: inspect peak memory and runtime alongside loss. Keep the configured training schedule even when a frontend is larger or slower.
+
+**Simplicity criterion**: prefer clear, compact ideas when choosing experiments. Small gains should motivate further simplification. The engine's keep/discard decision still follows strict loss improvement.
+
+**The first run**: establish the baseline by running the existing frontend unchanged.
+
+## Output format
+
+A completed experiment prints a summary like this (example values):
+
+```text
+test_loss: 0.650000
+test_accuracy: 0.625000
+selection_loss: 0.620000
+status: keep
+experiment: <experiment-id>
 ```
 
-`FRONTEND_CONFIG` must be JSON serializable and accurately describe the candidate.
-The fixed wrapper owns initialization RNG isolation, frontend window chunks,
-RNG-preserving activation checkpointing, parameter counting, and outer decay
-groups. Do not add files or dependencies. Standard-library and existing pinned
-numerical/PyTorch dependencies are available.
-
-Input is already centered, resampled to 256 Hz, and zero-padded. Put additional
-transforms inside the candidate. Features must use only their own waveform and
-learned frontend parameters. Keep features deterministic in train/eval mode,
-finite for silent windows, and differentiable through the fixed inner fit. Do not
-detach learned operations, read files/labels/recording metadata, import training or
-evaluation code, use cross-sample normalization, mutate persistent statistics, or
-load pretrained weights. The fixed CNN always consumes exactly 64 feature
-channels and 256 time bins. Its three convolution blocks emit 32 channels;
-internal frontend representations may differ.
-
-## Fixed controls and objective
-
-Keep the sample recipe, source inventory, train Days 0-7, query Days 8/11,
-optional disjoint selection days, and test Days 12/13. Every outer step includes
-each configured mouse once, with its eligible query-event weight. Only query
-labels supply the outer gradient. Only support supplies CNN SGD updates and
-BatchNorm recalibration. Preserve the complete differentiable inner trajectory,
-plain SGD, fixed unlearned CNN reference, outer AdamW, crop policy/RNG, full epoch
-budget, checkpoint selection, and inference behavior.
-
-**Minimize `test_loss`: equal-mouse-mean ordinary predictive log loss on Days
-12/13 at the run's query/valid-selected checkpoint.** Lower is better; strictly
-lower promotes, ties discard. The first successful candidate is kept. Report
-test accuracy at 0.5, AUC, sensitivity, specificity, runtime, and VRAM alongside
-loss. Changing test metrics cannot choose checkpoints inside an individual run.
-Test scores choose frontend candidates across completed runs.
-
-The user explicitly made Days 12/13 a development set for this search. Do not
-describe the selected score or final replay as untouched generalization. There
-is no independent held-out set in this protocol.
-
-Do not edit `protocol.lock.json` to admit a candidate change. Deliberate fixed
-infrastructure changes require review, a new protocol, a fresh session, and a
-matching baseline. Do not install packages or change the runtime in a session.
-
-## Finite experiment loop
-
-For each candidate remaining in the authorized count:
-
-1. Inspect the saved best, recent results, per-mouse scores, and current code.
-   Restore the best before building on it when needed.
-2. Form one English hypothesis and edit only `meta_learning/frontend.py`.
-3. Run `./run_research.sh check`. Repair contract failures before real training.
-4. Run one candidate in the foreground, redirecting output:
-
-   ```bash
-   ./run_research.sh experiment --description 'brief frontend hypothesis' > candidate.log 2>&1
-   rg '^(test_loss|test_accuracy|selection_loss|status|experiment):' candidate.log
-   ```
-
-5. Inspect `experiments/<id>/result.json`, `train.log`, histories, selected
-   checkpoint, per-mouse predictions, sampling/event counts, fingerprints, runtime,
-   and VRAM. Compare development-test metrics at the selected step, not the best
-   test step in a history. Keep signal-quality coverage claims tied to actual audits.
-6. Let the evaluator maintain `results.tsv` and `best.json`. Do not relabel failed
-   or discarded attempts. Keep successful improvements as the next starting point.
-7. For a discard or broken candidate, run `./run_research.sh restore`. It backs up
-   the current file before restoring only the best frontend. Preserve all logs,
-   source snapshots, interruptions, checkpoints, and unrelated user changes.
-8. Report progress and stop when the requested count or execution budget is met.
-
-The fixed 86,400-second watchdog is a maximum per attempt, not an epoch/time
-tradeoff. A timeout records `crash` and preserves the last checkpoint; it never
-promotes a partial run. Keep the same watchdog within a session. Larger/smaller
-explicit watchdogs require a fresh session. Synthetic tests use smaller fixed
-budgets independently; never substitute them into production comparisons.
-
-## Recovery, replay, and completion
-
-Interrupted experiments can resume from their own immutable code snapshot:
+Extract the score from the log:
 
 ```bash
-./run_research.sh experiment --resume <experiment-id>
+rg '^(test_loss|test_accuracy|selection_loss|status|experiment):' "$OUTPUT_DIR/run.log"
 ```
 
-The existing engine restores compatible frontend/outer optimizer, complete task
-BatchNorm state, RNG streams, histories, selection, and epoch budget. Current
-working frontend changes cannot change that saved experiment. Mismatched sources,
-configuration, runtime, or protocol require a new session.
+The experiment's `result.json` also records selection role/accuracy, selected step, peak VRAM, and wall time. Use the test score at that selected step. Histories, per-mouse predictions, sample/event counts, class ratios, window settings, source fingerprints, AUC, sensitivity, and specificity are available in the saved artifacts. Describe quality audits by their actual coverage; synthetic checks cover the frontend contract.
 
-Replay one role without training:
+## Logging results
 
-```bash
-./run_research.sh replay --split query
-./run_research.sh replay --split test
+After each experiment, the engine updates `$OUTPUT_DIR/results.tsv`. It is tab-separated and has 12 columns:
+
+```text
+experiment	commit	frontend_sha256	selection_role	selection_loss	selection_accuracy	test_loss	test_accuracy	peak_vram_mb	wall_seconds	status	description
 ```
 
-`valid` requires configured selection days. `./run_research.sh finalize` replays
-the best candidate's saved weights on test and seals the study. Finalization uses
-the same development data already used for search; it does not create a new
-independent evaluation. Run it only when the user requests study completion.
+1. `experiment`, `commit`, `frontend_sha256`: experiment and source identities.
+2. `selection_role`, `selection_loss`, `selection_accuracy`: query/valid checkpoint selection.
+3. `test_loss`, `test_accuracy`: development-test score at that checkpoint.
+4. `peak_vram_mb`, `wall_seconds`: memory and runtime.
+5. `status`: `keep`, `discard`, or `crash`.
+6. `description`: a short English description of the idea.
+
+Let the engine maintain the ledger and `best.json`. Preserve failed/discarded results, immutable snapshots, logs, checkpoints, and attempt records. Keep generated artifacts and research sessions out of version control.
+
+## The experiment loop
+
+Work on the study branch and repeat within the user-authorized count or execution budget:
+
+1. Inspect the branch, current frontend, saved best, and recent results.
+2. Edit `meta_learning/frontend.py` with one experimental idea.
+3. Run `./run_research.sh check`; fix contract failures before training.
+4. Run `./run_research.sh experiment --description 'brief hypothesis' > "$OUTPUT_DIR/run.log" 2>&1`. Redirect output so logs stay out of the conversation.
+5. Read the summary with `rg '^(test_loss|test_accuracy|selection_loss|status|experiment):' "$OUTPUT_DIR/run.log"`.
+6. If the command fails or the summary is missing, read `tail -n 50 "$OUTPUT_DIR/run.log"`, then the saved `contract.log` and `train.log`. Diagnose before retrying.
+7. Inspect the saved result and per-mouse metrics. The engine records the outcome in the TSV and updates the best candidate.
+8. If loss improved, keep the frontend and build on it.
+9. If loss tied, worsened, or the idea failed, run `./run_research.sh restore`. It backs up and restores only the frontend. Preserve unrelated work and all experiment artifacts.
+
+Try ideas, keep improvements, and build the next experiment on what worked. If ideas run short, re-read the frontend and recent results, combine promising changes, or try a different architecture.
+
+**Timeout**: the default watchdog is 86,400 seconds per attempt. Keep it fixed within the session. Timeout records `crash` and preserves checkpoints; partial runs cannot promote. The watchdog never replaces complete epochs. Use separate explicit short jobs for smoke checks.
+
+**Crashes**: fix simple frontend errors and retry within the authorized budget. Skip fundamentally broken ideas. Resume a compatible interrupted experiment with `./run_research.sh experiment --resume <experiment-id>`; it uses its immutable code and restores saved optimizer, BatchNorm, RNG, history, and selection state.
+
+**KEEP GOING WITHIN THE BUDGET**: once authorized, continue through the finite job without asking after each candidate. Report progress, honor stop requests, and stop when the requested count or execution budget is reached.
+
+Replay saved weights without fitting with `./run_research.sh replay --split test`; use `query` or `valid` for the other roles. `valid` requires selection days. When the user requests study completion, run `./run_research.sh finalize` to replay the best development-test score and seal the session.
