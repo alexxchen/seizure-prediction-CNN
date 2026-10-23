@@ -16,3 +16,4 @@ autoresearch-runs/
 *.log
 prepared/
 meta-runs/
+results.tsv

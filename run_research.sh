@@ -5,13 +5,11 @@ project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 action="${1:-help}"
 if [[ "$action" == help || "$action" == --help || "$action" == -h ]]; then
     cat <<'HELP'
-Usage: ./run_research.sh [prepare|check|experiment|restore|replay|finalize] [OPTIONS]
+Usage: ./run_research.sh [prepare|check|experiment|replay] [OPTIONS]
   prepare     Verify raw recording and annotation identities
   check       Verify fixed controls and run synthetic frontend contract checks
-  experiment  Run one finite candidate; rank by development-test mean log loss
-  restore     Restore the best frontend, backing up the current frontend
-  replay      Inference using the best candidate's snapshot: --split query|valid|test
-  finalize    Replay best development-test predictions and seal the session
+  experiment  Run one candidate and print metrics; the agent logs and keeps/discards it
+  replay      Inference from --experiment ID --split query|valid|test
 
 Experiment options: --description TEXT [--resume EXPERIMENT_ID]
                     --timeout-seconds N (default 86400; fixed epoch budget)
@@ -19,11 +17,13 @@ Launcher options: --device auto|cuda|cpu --dry-run
 Environment: DATA_DIR, PREPARED_DIR, CACHE_DIR, OUTPUT_DIR, IMAGE_NAME,
              TRAIN_CPU_THREADS (default 4)
 All operations run in the foreground. Read program.md before starting research.
+Each experiment returns to the agent for result review and the next hypothesis.
+The agent repeats until stopped and manages results.tsv and Git commits.
 HELP
     exit 0
 fi
 shift
-case "$action" in prepare|check|experiment|restore|replay|finalize) ;; *) echo "Unknown action: $action" >&2; exit 2 ;; esac
+case "$action" in prepare|check|experiment|replay) ;; *) echo "Unknown action: $action" >&2; exit 2 ;; esac
 data_dir="${DATA_DIR:-/data/users/jianchen/data/seizure_data}"
 cache_dir="${CACHE_DIR:-/data/users/jianchen/data/seizure_data-cache/meta-learning}"
 prepared_dir="${PREPARED_DIR:-$cache_dir/prepared}"
@@ -45,9 +45,7 @@ for directory_name in data_dir cache_dir prepared_dir output_dir; do
     value="${!directory_name}"
     [[ "$value" == /* ]] || printf -v "$directory_name" '%s/%s' "$PWD" "$value"
 done
-project_mode=ro
 prepared_mode=ro
-[[ "$action" != restore ]] || project_mode=rw
 [[ "$action" != prepare ]] || prepared_mode=rw
 research_commit=unknown
 if command -v git >/dev/null; then
@@ -59,12 +57,12 @@ command_args=(docker run --rm --init --shm-size=1g
     -e "AUTORESEARCH_COMMIT=${research_commit:-unknown}"
     -e "OMP_NUM_THREADS=${TRAIN_CPU_THREADS:-4}" -e "MKL_NUM_THREADS=${TRAIN_CPU_THREADS:-4}"
     -e "OPENBLAS_NUM_THREADS=${TRAIN_CPU_THREADS:-4}" -e MPLCONFIGDIR=/tmp/matplotlib
-    -w /workspace -v "$project_dir:/workspace:$project_mode")
+    -w /workspace -v "$project_dir:/workspace:ro")
 if [[ "$action" != check ]]; then
     command_args+=(-v "$data_dir:/data/MouseLFP:ro" -v "$cache_dir:/cache"
                   -v "$prepared_dir:/prepared:$prepared_mode" -v "$output_dir:/output")
 fi
-if [[ "$action" == experiment || "$action" == replay || "$action" == finalize ]]; then
+if [[ "$action" == experiment || "$action" == replay ]]; then
     if [[ "$device" == cuda || "$device" == cuda:* ]] || { [[ "$device" == auto ]] && command -v nvidia-smi >/dev/null; }; then
         command_args+=(--gpus all)
     fi
@@ -73,7 +71,6 @@ command_args+=("$image_name")
 case "$action" in
     prepare) command_args+=(python prepare.py --data-dir /data/MouseLFP --output /prepared "${arguments[@]}") ;;
     check) command_args+=(python research.py check "${arguments[@]}") ;;
-    restore) command_args+=(python research.py restore --run-dir /output "${arguments[@]}") ;;
     *) command_args+=(python research.py "$action" --run-dir /output --data-dir /data/MouseLFP
                       --prepared-dir /prepared --cache-dir /cache --device "$device" "${arguments[@]}") ;;
 esac

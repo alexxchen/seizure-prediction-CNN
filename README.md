@@ -8,31 +8,47 @@ This branch adapts `seizure-single-channel-auto-research` to shared-frontend met
 
 **Objective: minimize the equal-mouse-mean test log loss on Days 12/13.** The user explicitly designated these days as a development set for frontend research. Accuracy at threshold 0.5, AUC, sensitivity, and specificity are supporting metrics. Each candidate first selects its checkpoint by the existing query/valid log-loss rule; the candidate's development-test score at that checkpoint controls `keep`/`discard`. Test labels never supply training gradients, CNN updates, or within-run checkpoint selection. The first successful baseline is kept; subsequent loss must be strictly lower. Search results and final replay are development results, not an untouched generalization estimate.
 
-Read `program.md` for the agent loop. Editing this scaffold does not start training. Experiments require a separately requested finite job or candidate count.
+Read `program.md` for the agent loop, following [karpathy/autoresearch](https://github.com/karpathy/autoresearch/blob/master/program.md): once the user starts a study, the agent continues experimenting until interrupted. Each candidate is committed before training; improvements retain their commits, and failed/discarded candidates are logged before resetting to their parent. The agent initializes and appends the untracked repository-root `results.tsv` with five columns: `commit`, `test_loss`, `memory_gb`, `status`, and `description`. The runner supplies metrics; the agent decides `keep`/`discard`/`crash` and manages Git history. Editing the workflow does not start a study.
+
+The loop is sequential and driven by feedback: run one candidate, wait for its result, let the agent analyze and record the outcome, retain or reset the commit, then choose the next hypothesis. Each runner invocation returns control to the agent after one experiment. Future candidates are chosen after reviewing the latest result; the agent does not queue variants or edit the next candidate during a run.
+
+Start each study on a fresh `autoresearch/<tag>` branch from a clean, committed `meta-learning/auto-research` checkout. A typical candidate iteration is:
 
 ```bash
+export OUTPUT_DIR="$PWD/autoresearch-runs/<tag>"
+parent=$(git rev-parse HEAD)
+# Edit only meta_learning/frontend.py.
 ./run_research.sh check
-./run_research.sh prepare
-export OUTPUT_DIR="$PWD/autoresearch-runs/frontend-study"
-./run_research.sh experiment --description 'baseline waveform ResNet' > baseline.log 2>&1
-# Edit only meta_learning/frontend.py, then run another explicit finite job.
-./run_research.sh experiment --description 'frontend hypothesis' > candidate.log 2>&1
-./run_research.sh restore
-./run_research.sh replay --split test
-./run_research.sh finalize
+git add meta_learning/frontend.py
+git commit -m 'frontend hypothesis'
+./run_research.sh experiment --description 'frontend hypothesis' > "$OUTPUT_DIR/run.log" 2>&1
+# Wait for completion, then let the agent read and analyze the result.
+# Append its score and keep/discard/crash decision to results.tsv.
 ```
 
-All research commands run in the foreground. `--dry-run` prints a launcher command without creating directories or running Docker. `--timeout-seconds` defaults to 86,400 seconds per candidate attempt; it is a failure watchdog, never early stopping. The configured 100 outer steps and 40 complete inner epochs remain unchanged. Use a new session for a different protocol, source inventory, runtime, or watchdog. A study uses the four configured mice X1/X2/X9/X14; do not silently expand to seven.
+Retain an improved candidate's commit. For `discard` or an abandoned `crash`, use `git reset --hard "$parent"` after recording the result and verifying the working tree is clean. Then choose the next hypothesis from the result.
+
+Initialize the output directory and ledger, prepare data if needed, and run the unchanged frontend baseline before testing ideas; see `program.md` for setup. Compare full-precision losses from saved results. The branch tip tracks the best kept frontend; the ledger records all attempts, including discarded/crashed commits. Threshold-0.5 accuracy accompanies loss in progress reports and detailed artifacts. Reset only the current candidate's own commits on the dedicated study branch, preserving unrelated changes, untracked results, and all historical artifacts.
+
+All research commands run in the foreground. `--dry-run` prints a launcher command without creating directories or running Docker. `--timeout-seconds` defaults to 86,400 seconds per candidate attempt; it is a failure watchdog, never early stopping. The configured 50 outer steps and 40 complete inner epochs stay fixed across candidates. Use a new session for a different protocol, source inventory, runtime, or watchdog. A study uses the four configured mice X1/X2/X9/X14.
 
 `protocol.lock.json` checks fixed file hashes and rejects extra executable modules in controlled directories. Synthetic `check` verifies waveform/output shape, initialization RNG preservation, reproducibility, silence, sample/chunk independence, persistent state, and frontend gradients. These checks detect common implementation mistakes; candidates are trusted research code and the checks are not a security sandbox.
 
-Each candidate executes an immutable copied source tree, so later working-tree edits cannot change a running experiment. Artifacts include `session.json`, `results.tsv`, `best.json`, `experiments/<id>/experiment.json`, `snapshot.json`, `contract.log`, `train.log`, `result.json`, immutable per-attempt records in `attempts/`, and the training artifacts described below. The ledger records both query/valid selection metrics and development-test metrics. Crashes preserve snapshots, logs, and checkpoints. Resume the same candidate from its saved source with:
+Each candidate executes an immutable copied source tree, so later working-tree edits cannot change a running experiment. Artifacts include `session.json`, `experiments/<id>/experiment.json`, `snapshot.json`, `contract.log`, `train.log`, `result.json`, immutable per-attempt records in `attempts/`, and the training artifacts described below. `result.json` contains both query/valid selection metrics and development-test metrics, plus execution status (`complete` or `crash`). Crashes preserve snapshots, logs, and checkpoints. The runner leaves the agent's `results.tsv` untouched and maintains no cross-candidate best record. Resume the same candidate from its saved source with:
 
 ```bash
 ./run_research.sh experiment --resume <experiment-id>
 ```
 
-`restore` backs up the current frontend before restoring only that file from the best snapshot. `replay --split query|valid|test` uses the best candidate's saved code and saved CNN/BatchNorm weights without fitting. `finalize` replays the best test score and seals the study against further experiments. Finalization does not provide a new held-out dataset.
+Replay a specific experiment's saved code and CNN/BatchNorm weights without fitting:
+
+```bash
+./run_research.sh replay --experiment <experiment-id> --split test
+```
+
+Choose `query`, `valid`, or `test`; `valid` requires selection days. The ledger's commit identifies the candidate in its saved `experiment.json`. Study continuation uses Git history and the ledger; stopping leaves the session open.
+
+This infrastructure change establishes protocol version 2 for continuous agent research and Git/TSV result management. Its lock records the current committed runtime and launcher updates (PyTorch 2.14.1/CUDA 12.6 and 50 outer steps), alongside the new workflow. Start a fresh session and baseline under this protocol. Existing sessions and snapshots retain their original files and remain available through their original code/runtime.
 
 Local equivalents use the existing pinned dependencies:
 
@@ -121,7 +137,7 @@ Crop preparation uses bounded-memory caches of positive contexts and complete el
 | Setting | `configs/meta.json` | Config default |
 | --- | --- | --- |
 | Targets | X1/X2/X9/X14 | X2 |
-| Outer steps | 100 | 100 |
+| Outer steps | 50 | 100 |
 | Inner/per-mouse epochs | 40 | 50 |
 | CNN/frontend batch size | 64 / 64 | 32 / 32 |
 | Support/query crops | 4 / 64 | 40 / 64 |
@@ -132,7 +148,7 @@ The JSON config explicitly overrides these defaults. It uses inner SGD lr 0.01, 
 
 ## Commands
 
-The Docker launcher uses `seizure-prediction-cnn:pytorch`, built with PyTorch 2.14.1, CUDA 12.6, and cuDNN 9. This runtime enables cuDNN for deterministic dilated convolutions, including those generated by convolution double backward. The image disables TF32 to keep standalone CUDA checks consistent with the trainer's FP32 policy. Build it with `docker build -t seizure-prediction-cnn:pytorch .`. Existing containers retain their original image; use the original runtime for their replay and compatible resumption. The existing `protocol.lock.json` retains the previous locked workflow's hashes.
+The Docker launcher uses `seizure-prediction-cnn:pytorch`, built with PyTorch 2.14.1, CUDA 12.6, and cuDNN 9. This runtime enables cuDNN for deterministic dilated convolutions, including those generated by convolution double backward. The image disables TF32 to keep standalone CUDA checks consistent with the trainer's FP32 policy. Build it with `docker build -t seizure-prediction-cnn:pytorch .`. Existing containers retain their original image; use the original runtime for their replay and compatible resumption. The version-2 protocol locks the current runtime files; earlier sessions retain their original locks in their source snapshots.
 
 Raw data lives under `/data/users/jianchen/data/seizure_data`, with shared caches under `/data/users/jianchen/data/seizure_data-cache/meta-learning`. Override `DATA_DIR`, `CACHE_DIR`, `PREPARED_DIR`, `OUTPUT_DIR`, `IMAGE_NAME`, or `TRAIN_CPU_THREADS` as needed. The launcher's default output is `results/waveform-conv-meta`.
 

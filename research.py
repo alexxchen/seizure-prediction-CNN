@@ -1,12 +1,10 @@
-"""Finite frontend experiments with locked controls, snapshots, and recovery."""
+"""Run frontend experiments; the research agent manages the ledger and Git history."""
 
 import argparse
 import contextlib
-import csv
 from datetime import datetime, timezone
 import fcntl
 import hashlib
-import io
 import json
 import math
 import os
@@ -19,9 +17,6 @@ import time
 
 ROOT = Path(__file__).resolve().parent
 EDITABLE = "meta_learning/frontend.py"
-COLUMNS = ("experiment", "commit", "frontend_sha256", "selection_role", "selection_loss",
-           "selection_accuracy", "test_loss", "test_accuracy", "peak_vram_mb", "wall_seconds",
-           "status", "description")
 
 
 def read_json(path):
@@ -73,7 +68,7 @@ def verify_protocol(root=ROOT):
     """Reject changed controls and additional executable candidate modules."""
     root = Path(root)
     lock = read_json(root / "protocol.lock.json")
-    if set(lock) != {"version", "editable", "objective", "fixed_sha256"} or lock["version"] != 1:
+    if set(lock) != {"version", "editable", "objective", "fixed_sha256"} or lock["version"] != 2:
         raise ValueError("Invalid frontend research protocol")
     if lock["editable"] != [EDITABLE] or lock["objective"] != "minimum_test_mouse_mean_log_loss":
         raise ValueError("Unsupported research scope or objective")
@@ -165,49 +160,11 @@ def ensure_session(args):
         if (args.run_dir / "experiments").exists():
             raise ValueError("Experiments exist without session metadata")
         write_json(path, dict(created_utc=timestamp(), identity=identity))
-    if (args.run_dir / "final.json").exists():
-        raise ValueError("This session is finalized; start a new session for further experiments")
     return identity
-
-
-def promotion(selection, previous):
-    """Rank frontends on development-test loss at the query/valid-selected checkpoint."""
-    score = selection["test"]["aggregate"]["loss"]
-    if selection["role"] not in {"query", "valid"} or not math.isfinite(score):
-        raise ValueError("Expected finite development-test loss and query/valid checkpoint selection")
-    return previous is None or score < previous["test_loss"]
-
-
-def write_ledger(run_dir):
-    """Rebuild atomically from result records; resumed attempts have one row."""
-    buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=COLUMNS, delimiter="\t", extrasaction="ignore")
-    writer.writeheader()
-    for path in sorted((run_dir / "experiments").glob("*/result.json")):
-        writer.writerow(read_json(path))
-    temporary = run_dir / "results.tsv.tmp"
-    temporary.write_text(buffer.getvalue())
-    temporary.replace(run_dir / "results.tsv")
-
-
-def reconcile(run_dir):
-    """Repair a stopped promotion/ledger write from durable experiment records."""
-    best = None
-    for path in sorted((run_dir / "experiments").glob("*/result.json")):
-        row = read_json(path)
-        if row["status"] == "keep" and (best is None or row["test_loss"] < best["test_loss"]):
-            best = {key: row[key] for key in ("experiment", "frontend_sha256", "selection_role", "selection_loss", "test_loss")}
-    if best is not None:
-        write_json(run_dir / "best.json", best)
-    elif (run_dir / "best.json").exists():
-        raise ValueError("Best record has no matching successful experiment")
-    write_ledger(run_dir)
-    return best
 
 
 def experiment(args):
     identity = ensure_session(args)
-    previous = reconcile(args.run_dir)
     if args.resume is not None:
         directory = experiment_dir(args.run_dir, args.resume)
         hashes = verify_snapshot(directory)
@@ -256,26 +213,25 @@ def experiment(args):
         if selection["role"] != expected_role:
             raise ValueError("Unexpected checkpoint selection role")
         selected_test = selection["test"]["aggregate"]
-        kept = promotion(selection, previous)
+        if not math.isfinite(selected_test["loss"]):
+            raise ValueError("Expected finite development-test loss")
         result.update(selection_role=selection["role"], selection_loss=selection["aggregate"]["loss"],
                       selection_accuracy=selection["aggregate"]["accuracy"],
                       test_loss=selected_test["loss"], test_accuracy=selected_test["accuracy"],
                       peak_vram_mb=status["peak_vram_mb"], selected_step=selection["step"],
-                      status="keep" if kept else "discard")
+                      status="complete")
     except BaseException as error:
         result.update(status="crash", error=type(error).__name__, message=str(error))
         result["wall_seconds"] = time.monotonic() - started
         write_json(attempt_path, result)
         write_json(directory / "result.json", result)
         write_json(directory / "research_status.json", result)
-        reconcile(args.run_dir)
         raise
     result["wall_seconds"] = time.monotonic() - started
     write_json(attempt_path, result)
     write_json(directory / "result.json", result)
     write_json(directory / "research_status.json", result)
-    reconcile(args.run_dir)
-    for name in ("test_loss", "test_accuracy", "selection_loss", "status", "experiment"):
+    for name in ("test_loss", "test_accuracy", "selection_loss", "peak_vram_mb", "experiment"):
         print(f"{name}: {result[name]}", flush=True)
     return result
 
@@ -289,30 +245,9 @@ def experiment_dir(run_dir, identifier):
     return directory
 
 
-def best_experiment(run_dir):
-    best = reconcile(run_dir)
-    if best is None:
-        raise ValueError("No successful baseline in this session")
-    directory = experiment_dir(run_dir, best["experiment"])
-    hashes = verify_snapshot(directory)
-    if hashes[EDITABLE] != best["frontend_sha256"]:
-        raise ValueError("Best frontend hash mismatch")
-    return directory
-
-
-def restore(args):
-    directory = best_experiment(args.run_dir)
-    backup = args.run_dir / "restore-backups" / timestamp() / EDITABLE
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ROOT / EDITABLE, backup)
-    temporary = (ROOT / EDITABLE).with_suffix(".py.restore.tmp")
-    shutil.copyfile(directory / "source" / EDITABLE, temporary)
-    temporary.replace(ROOT / EDITABLE)
-    print(json.dumps(dict(restored=directory.name, backup=str(backup))))
-
-
 def replay(args):
-    directory = best_experiment(args.run_dir)
+    directory = experiment_dir(args.run_dir, args.experiment)
+    verify_snapshot(directory)
     source = directory / "source"
     from meta_learning.common import resolve_device, runtime_identity
     from prepare import load_dataset
@@ -321,19 +256,11 @@ def replay(args):
     if (digest(load_dataset(args.prepared_dir, args.data_dir).signature) != identity["source_inventory_sha256"] or
             runtime_identity(resolve_device(args.device)) != identity["runtime"]):
         raise ValueError("Replay requires the session's sources and runtime")
-    final_path = args.run_dir / "final.json"
-    if args.action == "finalize" and final_path.exists():
-        print(json.dumps(read_json(final_path)), flush=True)
-        return read_json(final_path)
     worker([sys.executable, "evaluate.py", "--split", args.split, "--data-dir", str(args.data_dir),
             "--prepared-dir", str(args.prepared_dir), "--cache-dir", str(args.cache_dir),
             "--run-dir", str(directory), "--device", str(identity["runtime"]["device"])],
            source, directory / f"replay-{args.split}.log", args.timeout_seconds)
     report = read_json(directory / "evaluation" / args.split / "result.json")
-    if args.action == "finalize":
-        write_json(final_path, dict(experiment=directory.name, report=report, finalized_utc=timestamp(),
-                                   selection="Minimum mouse-mean development-test log loss across frontends; query/valid selects each run checkpoint",
-                                   test_interpretation="Days 12/13 were used for frontend search; this is not an untouched generalization estimate"))
     print(json.dumps(report), flush=True)
     return report
 
@@ -346,11 +273,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     commands.add_parser("check", help="Verify protocol and run finite synthetic frontend checks")
-    for action in ("experiment", "restore", "replay", "finalize"):
+    for action in ("experiment", "replay"):
         child = commands.add_parser(action)
         child.add_argument("--run-dir", type=Path, required=True)
-        if action == "restore":
-            continue
         child.add_argument("--data-dir", type=Path, default=Path("/data/MouseLFP"))
         child.add_argument("--prepared-dir", type=Path, default=Path("prepared"))
         child.add_argument("--cache-dir", type=Path, default=Path("cache"))
@@ -361,6 +286,7 @@ def main():
             child.add_argument("--description")
             child.add_argument("--resume", metavar="EXPERIMENT_ID")
         if action == "replay":
+            child.add_argument("--experiment", required=True, metavar="EXPERIMENT_ID")
             child.add_argument("--split", choices=("query", "valid", "test"), required=True)
     args = parser.parse_args()
     verify_protocol()
@@ -375,11 +301,7 @@ def main():
     with session_lock(args.run_dir):
         if args.action == "experiment":
             experiment(args)
-        elif args.action == "restore":
-            restore(args)
         else:
-            if args.action == "finalize":
-                args.split = "test"
             replay(args)
 
 
