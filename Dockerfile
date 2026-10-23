@@ -1,5 +1,5 @@
-# PyTorch 2.14.1 enables deterministic dilated convolutions through cuDNN.
-FROM pytorch/pytorch:2.14.1-cuda12.6-cudnn9-runtime@sha256:1262abc856a428933c0477b4be87079173a0b087b7691c47fcb396b7b5775c56
+# CUDA 13.0 includes sm_120 kernels for RTX 5090; keep PyTorch 2.14.1 fixed.
+FROM pytorch/pytorch:2.14.1-cuda13.0-cudnn9-runtime@sha256:3c0b174a1339193a5bcc4b37d737c9f5ca3c4782a2293d3888e4271367eddf44
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

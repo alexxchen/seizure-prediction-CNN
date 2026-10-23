@@ -55,12 +55,12 @@ def current_commit():
 
 def controlled_files(root):
     root = Path(root)
-    files = [path for path in root.iterdir() if path.suffix in {".py", ".sh", ".json"}]
-    files += [root / name for name in ("Dockerfile", "requirements.txt", "program.md", "AGENTS.md")]
+    files = [path for path in root.iterdir() if path.suffix in {".py", ".sh", ".ps1", ".json"}]
+    files += [root / name for name in (".gitattributes", "Dockerfile", "requirements.txt", "program.md", "AGENTS.md")]
     for folder in ("meta_learning", "models", "configs", "scripts"):
         files += [path for path in (root / folder).rglob("*")
-                  if path.is_file() and path.suffix in {".py", ".json", ".sh"}]
-    return sorted(str(path.relative_to(root)) for path in files
+                  if path.is_file() and path.suffix in {".py", ".json", ".sh", ".ps1"}]
+    return sorted(path.relative_to(root).as_posix() for path in files
                   if path.relative_to(root).as_posix() not in {EDITABLE, "protocol.lock.json"})
 
 
@@ -68,7 +68,7 @@ def verify_protocol(root=ROOT):
     """Reject changed controls and additional executable candidate modules."""
     root = Path(root)
     lock = read_json(root / "protocol.lock.json")
-    if set(lock) != {"version", "editable", "objective", "fixed_sha256"} or lock["version"] != 2:
+    if set(lock) != {"version", "editable", "objective", "fixed_sha256"} or lock["version"] != 3:
         raise ValueError("Invalid frontend research protocol")
     if lock["editable"] != [EDITABLE] or lock["objective"] != "minimum_test_mouse_mean_log_loss":
         raise ValueError("Unsupported research scope or objective")

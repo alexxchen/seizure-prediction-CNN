@@ -1,12 +1,13 @@
 {
-  "version": 2,
+  "version": 3,
   "editable": [
     "meta_learning/frontend.py"
   ],
   "objective": "minimum_test_mouse_mean_log_loss",
   "fixed_sha256": {
+    ".gitattributes": "2b17c8aaf1304e32b7bbe27ce552bf623ecc49ae13f5589a85c2cf14a9c94fe5",
     "AGENTS.md": "76b7b98e85aaaa92955f121148ed055e0ed644c0ab76f0090ff64992f9901519",
-    "Dockerfile": "07627bb2ada4251e59db11f3964d54d082bdf591671d5ae51b99290265f3d3ee",
+    "Dockerfile": "5c6800b3bbcdfb8f22490d017bde0132fa26294fb95e6e7eb227b5c8db32db49",
     "SETTINGS_MouseLFP.json": "284b6dfc1f34a253c68397ebf7e21b6fcc024fad218fb02a357e6a217551bc64",
     "configs/meta.json": "ad215c6e95352fd2dc95cf7379c5dde97a0c900b7b5e1f8a547aad274aa9ac22",
     "evaluate.py": "c219c12657295af2b451396756db9f343fdbcb0f31d30490b52a8ef843227f5b",
@@ -28,10 +29,11 @@
     "models/__init__.py": "8da65f20eccafa43086b5dc745083332dd432cb3efa522bc5b9177ee14e6c5f3",
     "models/cnn.py": "4bbe4497883b2e530cace65362230e033277594cf5dc84d0b779fc62d253b7bf",
     "prepare.py": "1d863d71a76e5644883e7af358bf898f7401a196ade66332f14d167f2d0aa86b",
-    "program.md": "3db400cdd12663175be538c2a89c3d45151dad44662d50e5f0988709abc3fe43",
+    "program.md": "2c8d803466e48bc905ed2ebdf6fa7d230b3d146cf4fe2cf623a3225c403456d1",
     "requirements.txt": "ab6364c7b0cbf691af52023d531c391c56099dafbd965d85abd9218deb46db31",
-    "research.py": "1ce9c9e0f6620b85cb85376e3bbf135552bf307d3504be5528ef380285d022c4",
+    "research.py": "fcb17a09adf8fe0eff5f5b7530bd1c60d8a8b82c4ce2c4f9d41234a881a039fd",
     "run_meta.sh": "963f55a719c064559d2b78270e7c620b64ecfbd97271c7338f00caa12622776d",
+    "run_research.ps1": "f30c76a432f42fba96caed24a50a68d39aa36b7fd399315c174fe1382a199c14",
     "run_research.sh": "fc2ebd56d4a347b4517f4778e4bf514c5d41771f9058eece9b8081400df0eb07",
     "sample_pipeline.py": "246818ea2fb42dd56d773222dfe27429b27f5ee8f6ff9acc4119d18fed7cf11a",
     "scripts/fit_frontend_adam.py": "42fe306829c08f79166cb69da7817a136f4d63034adc96cb6deac428542bfd8c",

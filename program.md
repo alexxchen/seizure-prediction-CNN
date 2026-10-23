@@ -2,6 +2,8 @@
 
 This is an experiment to have the LLM do its own research.
 
+Use `run_research.ps1` on Windows and `run_research.sh` on Linux; adapt the Bash examples below to the host shell.
+
 ## Setup
 
 To set up a new experiment, work with the user to:
@@ -12,7 +14,7 @@ To set up a new experiment, work with the user to:
    - `README.md` and `AGENTS.md` — repository context and fixed research rules.
    - `meta_learning/frontend_contract.py`, `meta_learning/model.py`, and `models/cnn.py` — the frontend boundary, wrapper, and fixed CNN. Do not modify.
    - `configs/meta.json` — fixed training controls and budget. Do not modify.
-   - `research.py`, `run_research.sh`, and `protocol.lock.json` — execution, snapshots, and locked files. Do not modify.
+   - `research.py`, `run_research.sh`, `run_research.ps1`, and `protocol.lock.json` — execution, launchers, snapshots, and protocol controls. Do not modify during candidate search.
    - `prepare.py` — fixed source preparation. Do not modify.
    - `meta_learning/frontend.py` — the file you modify. Waveform transforms, architecture, normalization, and initialization.
 4. **Verify data exists**: Check that the version-3 source inventory exists. If not, run `./run_research.sh prepare`. Preserve private recordings, annotations, caches, and old sessions. Run `./run_research.sh check` before starting experiments.

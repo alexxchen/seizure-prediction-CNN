@@ -1,0 +1,9 @@
+# Keep exact protocol hashes identical in Windows and Linux checkouts.
+.gitattributes text eol=lf
+Dockerfile text eol=lf
+requirements.txt text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.json text eol=lf
+*.md text eol=lf
