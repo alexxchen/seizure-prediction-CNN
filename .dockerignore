@@ -14,7 +14,6 @@ data
 results
 output
 docker-output*
-.pytest_cache
 .venv
 *.pt
 *.pt.tmp

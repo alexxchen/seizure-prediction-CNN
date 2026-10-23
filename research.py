@@ -280,7 +280,7 @@ def main():
         child.add_argument("--prepared-dir", type=Path, default=Path("prepared"))
         child.add_argument("--cache-dir", type=Path, default=Path("cache"))
         child.add_argument("--device", default="auto")
-        child.add_argument("--timeout-seconds", type=int, default=86400,
+        child.add_argument("--timeout-seconds", type=int, default=12000,
                            help="Candidate watchdog; failure preserves artifacts without shortening the training budget")
         if action == "experiment":
             child.add_argument("--description")

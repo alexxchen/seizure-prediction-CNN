@@ -30,7 +30,7 @@ Retain an improved candidate's commit. For `discard` or an abandoned `crash`, us
 
 Initialize the output directory and ledger, prepare data if needed, and run the unchanged frontend baseline before testing ideas; see `program.md` for setup. Compare full-precision losses from saved results. The branch tip tracks the best kept frontend; the ledger records all attempts, including discarded/crashed commits. Threshold-0.5 accuracy accompanies loss in progress reports and detailed artifacts. Reset only the current candidate's own commits on the dedicated study branch, preserving unrelated changes, untracked results, and all historical artifacts.
 
-All research commands run in the foreground. `--dry-run` prints a launcher command without creating directories or running Docker. `--timeout-seconds` defaults to 86,400 seconds per candidate attempt; it is a failure watchdog, never early stopping. The configured 50 outer steps and 40 complete inner epochs stay fixed across candidates. Use a new session for a different protocol, source inventory, runtime, or watchdog. A study uses the four configured mice X1/X2/X9/X14.
+All research commands run in the foreground. `--dry-run` prints a launcher command without creating directories or running Docker. `--timeout-seconds` defaults to 12,000 seconds per candidate attempt; it is a failure watchdog, never early stopping. The configured 50 outer steps and 40 complete inner epochs stay fixed across candidates. Use a new session for a different protocol, source inventory, runtime, or watchdog. A study uses the four configured mice X1/X2/X9/X14.
 
 `protocol.lock.json` checks fixed file hashes and rejects extra executable modules in controlled directories. Synthetic `check` verifies waveform/output shape, initialization RNG preservation, reproducibility, silence, sample/chunk independence, persistent state, and frontend gradients. These checks detect common implementation mistakes; candidates are trusted research code and the checks are not a security sandbox.
 
@@ -56,7 +56,6 @@ Local equivalents use the existing pinned dependencies:
 python research.py check
 python research.py experiment --run-dir autoresearch-runs/local --data-dir /path/to/raw \
   --prepared-dir /path/to/prepared --cache-dir /path/to/cache --device cuda --description baseline
-python -m unittest discover -s tests -v
 ```
 
 The remaining sections describe the fixed trainer and the initial frontend baseline. Architectural statements about this baseline do not restrict subsequent frontend candidates.
