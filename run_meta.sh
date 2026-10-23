@@ -2,14 +2,14 @@
 set -euo pipefail
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-if (( $# == 0 )); then
-    set -- train --config configs/meta.json
-fi
-action="${1:-help}"
-if [[ "$action" == help || "$action" == --help || "$action" == -h ]]; then
+action="${1:-train}"
+case "$action" in
+    prepare|train|query|valid|test) if (( $# )); then shift; fi ;;
+    -h|--help|help)
     cat <<'HELP'
 Usage: bash run_meta.sh [prepare|train|query|valid|test] [OPTIONS]
-  No arguments: train with configs/meta.json in a detached Docker container.
+  Default: train with configs/meta.json in a detached Docker container.
+  Training options can be passed directly: ./run_meta.sh --resume
   Output is appended to run.log in the project directory.
   Training runs detached by default; other subcommands run in the foreground.
 
@@ -25,10 +25,10 @@ Launcher options: --device auto|cuda|cpu --dry-run --foreground
 Environment: DATA_DIR, CACHE_DIR, PREPARED_DIR, OUTPUT_DIR, IMAGE_NAME,
              TRAIN_CPU_THREADS
 HELP
-    exit 0
-fi
-shift
-case "$action" in prepare|train|query|valid|test) ;; *) echo "Unknown action: $action" >&2; exit 2 ;; esac
+        exit 0 ;;
+    -*) action=train ;;
+    *) echo "Unknown action: $action" >&2; exit 2 ;;
+esac
 background=false
 [[ "$action" != train ]] || background=true
 log_file="$project_dir/run.log"
@@ -56,7 +56,15 @@ for directory_name in data_dir cache_dir prepared_dir output_dir; do
     [[ "$value" == /* ]] || printf -v "$directory_name" '%s/%s' "$PWD" "$value"
 done
 prepared_mode=ro
-[[ "$action" != prepare ]] || prepared_mode=rw
+if [[ "$action" == prepare ]]; then
+    prepared_mode=rw
+    python_args=(python prepare.py --data-dir /data/MouseLFP --output /prepared)
+else
+    python_args=(python train.py)
+    [[ "$action" == train ]] || python_args=(python evaluate.py --split "$action")
+    python_args+=(--data-dir /data/MouseLFP --prepared-dir /prepared
+                  --cache-dir /cache --run-dir /output --device "$device")
+fi
 command_args=(docker run --rm --init --shm-size=1g
     --user "$(id -u):$(id -g)" -e HOME=/tmp
     -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1
@@ -65,27 +73,17 @@ command_args=(docker run --rm --init --shm-size=1g
     -w /workspace -v "$project_dir:/workspace:ro"
     -v "$data_dir:/data/MouseLFP:ro" -v "$cache_dir:/cache"
     -v "$prepared_dir:/prepared:$prepared_mode" -v "$output_dir:/output")
-if [[ "$action" == train || "$action" == query || "$action" == valid || "$action" == test ]]; then
-    if [[ "$device" == cuda || "$device" == cuda:* ]] || { [[ "$device" == auto ]] && command -v nvidia-smi >/dev/null; }; then
-        command_args+=(--gpus all)
-    fi
+if [[ "$action" != prepare ]] && { [[ "$device" == cuda || "$device" == cuda:* ]] ||
+    { [[ "$device" == auto ]] && command -v nvidia-smi >/dev/null; }; }; then
+    command_args+=(--gpus all)
 fi
 if "$background"; then
-    command_args+=(--detach -v "$log_file:/run-meta.log:rw")
+    command_args+=(--detach -v "$log_file:/run-meta.log:rw" "$image_name"
+        /bin/bash -c 'exec "$@" >> /run-meta.log 2>&1' run-meta)
+else
+    command_args+=("$image_name")
 fi
-command_args+=("$image_name")
-if "$background"; then
-    command_args+=(/bin/bash -c 'exec "$@" >> /run-meta.log 2>&1' run-meta)
-fi
-case "$action" in
-    prepare) command_args+=(python prepare.py --data-dir /data/MouseLFP --output /prepared "${arguments[@]}") ;;
-    train) command_args+=(python train.py --data-dir /data/MouseLFP --prepared-dir /prepared
-               --cache-dir /cache --run-dir /output --device "$device" "${arguments[@]}") ;;
-    query|valid|test)
-        split="$action"
-        command_args+=(python evaluate.py --data-dir /data/MouseLFP --prepared-dir /prepared
-            --cache-dir /cache --run-dir /output --device "$device" --split "$split" "${arguments[@]}") ;;
-esac
+command_args+=("${python_args[@]}" "${arguments[@]}")
 if "$dry_run"; then
     printf '%q ' "${command_args[@]}"
     printf '\n'

@@ -139,13 +139,13 @@ Raw data lives under `/data/users/jianchen/data/seizure_data`, with shared cache
 ```bash
 ./run_meta.sh prepare
 OUTPUT_DIR="$PWD/results/task-plan" ./run_meta.sh train --plan-only
-OUTPUT_DIR="$PWD/results/waveform-conv-meta-rms" ./run_meta.sh train --config configs/meta.json
+OUTPUT_DIR="$PWD/results/waveform-conv-meta-rms" ./run_meta.sh
 ```
 
-Training runs detached and appends output to `run.log`; the launcher prints its container ID. Use `tail -f run.log` or `--foreground`. `--dry-run` prints the Docker command without launching it. Use a new output directory for a new configuration or source version.
+`./run_meta.sh` defaults to training with `configs/meta.json`; pass training options directly, such as `./run_meta.sh --resume`. Explicit `train` is also accepted. Training runs detached and appends output to `run.log`; the launcher prints its container ID. Use `tail -f run.log` or `--foreground`. `--dry-run` prints the Docker command without launching it. Use a new output directory for a new configuration or source version.
 
 ```bash
-OUTPUT_DIR="$PWD/results/waveform-conv-meta-rms" ./run_meta.sh train --config configs/meta.json --resume
+OUTPUT_DIR="$PWD/results/waveform-conv-meta-rms" ./run_meta.sh --resume
 OUTPUT_DIR="$PWD/results/waveform-conv-meta-rms" ./run_meta.sh query
 OUTPUT_DIR="$PWD/results/waveform-conv-meta-rms" ./run_meta.sh valid
 OUTPUT_DIR="$PWD/results/waveform-conv-meta-rms" ./run_meta.sh test
