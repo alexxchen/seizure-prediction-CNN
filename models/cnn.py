@@ -11,8 +11,8 @@ class SeizureCNN(nn.Module):
     """Consume (N, channels, time) feature sequences and return class logits.
 
     A 1-D counterpart of the former 2-D MouseLFP CNN: channels are features with no
-    spatial order, and time is the only convolved axis. Flattening before the dense
-    layers keeps where in the window each pattern occurs.
+    spatial order, and time is the only convolved axis. Temporal mean pooling
+    summarizes pattern strength independently of its position in the window.
     """
 
     def __init__(self, input_shape, nb_classes=2):
@@ -32,10 +32,7 @@ class SeizureCNN(nn.Module):
         self.pool3 = nn.MaxPool1d(2, ceil_mode=True)
         self.drop1 = nn.Dropout(0.5)
         self.drop2 = nn.Dropout(0.5)
-        time_output = (time_bins - 1) // 2 + 1
-        for _ in range(3):
-            time_output = -(-time_output // 2)
-        self.dens1 = nn.Linear(32 * time_output, 128)
+        self.dens1 = nn.Linear(32, 128)
         self.dens2 = nn.Linear(128, nb_classes)
         for layer in (self.conv1, self.conv2, self.conv3, self.dens1, self.dens2):
             nn.init.xavier_uniform_(layer.weight)
@@ -45,7 +42,7 @@ class SeizureCNN(nn.Module):
         features = self.pool1(torch.relu(self.conv1(self.normal1(inputs))))
         features = self.pool2(torch.relu(self.conv2(self.normal2(features))))
         features = self.pool3(torch.relu(self.conv3(self.normal3(features))))
-        features = self.drop1(torch.flatten(features, start_dim=1))
+        features = self.drop1(features.mean(dim=-1))
         features = self.drop2(torch.sigmoid(self.dens1(features)))
         # CrossEntropyLoss consumes logits; softmax is applied during prediction.
         return self.dens2(features)
