@@ -16,7 +16,8 @@ FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672,
     rms_numerics="Peak-scaled RMS computation; dtype-tiny floor and zero output for silence",
     stem="Conv1d(1->16, k8, s4)", stages=[[16, 2], [32, 2], [48, 7], [64, 1], [64, 1]], norm_groups=8,
     stage_note="Each [channels, stride]: one residual block at that width, then a strided Conv1d to the next "
-               "width (28672 -> 7168 -> 3584 -> 1792 -> 256 -> 256); the last stage adds a dilation-2 block",
+               "width with overlapping kernel 2*stride+1 and padding stride "
+               "(28672 -> 7168 -> 3584 -> 1792 -> 256 -> 256); the last stage adds a dilation-2 block",
     block="Pre-activation: GroupNorm(8) -> GELU -> Conv1d k3 (dilation d) -> GroupNorm(8) -> GELU -> Conv1d k3 "
           "(zero-initialized), added to the residual stream",
     head="GroupNorm(8) -> GELU -> Conv1d(64 -> output_channels, k1); output is a (channels, time) sequence",
@@ -76,7 +77,8 @@ class WaveformFrontend(nn.Module):
             for index, (channels, stride) in enumerate(c["stages"]):
                 layers.append(ResidualBlock1d(channels))
                 if index + 1 < len(c["stages"]):
-                    layers.append(nn.Conv1d(channels, c["stages"][index + 1][0], stride, stride=stride))
+                    layers.append(nn.Conv1d(channels, c["stages"][index + 1][0], 2 * stride + 1,
+                                            stride=stride, padding=stride))
             layers.append(ResidualBlock1d(c["stages"][-1][0], dilation=2))
             self.body = nn.Sequential(*layers)
             width = c["stages"][-1][0]
