@@ -1,4 +1,4 @@
-"""Fixed waveform/CNN boundary and candidate checks for frontend research."""
+"""Fixed waveform input and checks for editable frontend/CNN architectures."""
 
 import json
 
@@ -9,7 +9,9 @@ from torch.utils.checkpoint import checkpoint
 from meta_learning.frontend import FRONTEND_CONFIG, WaveformFrontend
 
 INPUT_SAMPLES = 28672
-CNN_INPUT_SHAPE = (64, 256)
+CNN_INPUT_SHAPE = tuple(WaveformFrontend.output_shape)
+if len(CNN_INPUT_SHAPE) != 2 or any(type(value) is not int or value < 1 for value in CNN_INPUT_SHAPE):
+    raise ValueError("WaveformFrontend.output_shape must declare positive integer (channels, time) dimensions")
 
 
 class Frontend(nn.Module):
@@ -65,6 +67,10 @@ def check_candidate(device="cpu"):
     All transformations must remain sample-local and stateless across calls.
     """
     from meta_learning.model import MetaModel
+    from dataclasses import replace
+    from pathlib import Path
+    from meta_learning.config import Config
+    from meta_learning.inner import classifier_loss, fit_classifier
 
     devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
     with torch.random.fork_rng(devices=devices):
@@ -120,9 +126,37 @@ def check_candidate(device="cpu"):
         if gradients[0] is None or not gradients[0].abs().sum() or not any(
                 g is not None and g.abs().sum() > 0 for g in gradients[1:]):
             raise ValueError("Frontend disconnected its waveform or meta-parameters")
+        if any(isinstance(layer, nn.modules.batchnorm._BatchNorm) for layer in model.cnn.modules()):
+            raise ValueError("CNN BatchNorm must use models.normalization.AxisBatchNorm for full hypergradients")
+        reference_state = {name: value.detach().clone() for name, value in model.cnn.state_dict().items()}
+        model.cnn.eval()
+        with torch.no_grad():
+            logits = model.cnn(together)
+            repeated = model.cnn(together)
+        if logits.shape != (len(x), 2) or not torch.isfinite(logits).all() or not torch.equal(logits, repeated):
+            raise ValueError("CNN must emit finite deterministic (N, 2) logits in evaluation mode")
+        # This tiny synthetic fit checks architecture compatibility, not candidate performance.
+        # Real experiments always complete their declared configuration budget.
+        config = Config.load(Path(__file__).resolve().parent.parent / "configs/meta.json")
+        diagnostic = replace(config, inner_epochs=1, batch_size=2, inner_checkpoint_steps=1)
+        labels = torch.tensor([0, 1], device=device)
+        support_features = frontend(x)
+        fit = fit_classifier(model.cnn, support_features, labels, diagnostic, differentiable=True)
+        query_loss = classifier_loss(model.cnn, fit.parameters, fit.buffers,
+                                     frontend(x.flip(0)), labels.flip(0), diagnostic)
+        hypergradients = torch.autograd.grad(query_loss, tuple(frontend.parameters()), allow_unused=True)
+        if not torch.isfinite(query_loss) or not all(
+                gradient is None or torch.isfinite(gradient).all() for gradient in hypergradients):
+            raise ValueError("CNN fit produced a non-finite frontend hypergradient")
+        if not any(gradient is not None and gradient.abs().sum() > 0 for gradient in hypergradients):
+            raise ValueError("CNN fit disconnected the frontend hypergradient")
+        if any(not torch.equal(value, model.cnn.state_dict()[name]) for name, value in reference_state.items()):
+            raise ValueError("CNN evaluation or fitting mutated its unlearned reference state")
         return dict(input_samples=INPUT_SAMPLES, output_shape=list(CNN_INPUT_SHAPE),
-                    parameters=sum(p.numel() for p in frontend.parameters()), device=str(device),
-                    coverage="Synthetic shape, initialization RNG, chunk/sample isolation, state, silence, gradients")
+                    parameters=sum(p.numel() for p in frontend.parameters()),
+                    cnn_parameters=sum(p.numel() for p in model.cnn.parameters()), device=str(device),
+                    coverage="Synthetic shape, initialization RNG, chunk/sample isolation, state, silence, "
+                             "frontend gradients, CNN logits and checkpointed support/query hypergradients")
 
 
 if __name__ == "__main__":

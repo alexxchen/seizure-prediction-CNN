@@ -1,4 +1,4 @@
-"""Run frontend experiments; the research agent manages the ledger and Git history."""
+"""Run model and optimization experiments with fixed data and evaluation controls."""
 
 import argparse
 import contextlib
@@ -16,7 +16,12 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent
-EDITABLE = "meta_learning/frontend.py"
+EDITABLE = ("meta_learning/frontend.py", "models/cnn.py", "configs/meta.json")
+EDITABLE_CONFIG_FIELDS = (
+    "outer_steps", "inner_epochs", "inner_lr", "inner_weight_decay", "classifier_dropout",
+    "outer_lr", "outer_weight_decay", "batch_size", "frontend_batch_size",
+    "label_smoothing", "gradient_clip",
+)
 
 
 def read_json(path):
@@ -61,29 +66,38 @@ def controlled_files(root):
         files += [path for path in (root / folder).rglob("*")
                   if path.is_file() and path.suffix in {".py", ".json", ".sh", ".ps1"}]
     return sorted(path.relative_to(root).as_posix() for path in files
-                  if path.relative_to(root).as_posix() not in {EDITABLE, "protocol.lock.json"})
+                  if path.relative_to(root).as_posix() not in {*EDITABLE, "protocol.lock.json"})
 
 
-def verify_protocol(root=ROOT):
+def verify_protocol(root=None):
     """Reject changed controls and additional executable candidate modules."""
-    root = Path(root)
+    root = Path(ROOT if root is None else root)
     lock = read_json(root / "protocol.lock.json")
-    if set(lock) != {"version", "editable", "objective", "fixed_sha256"} or lock["version"] != 3:
-        raise ValueError("Invalid frontend research protocol")
-    if lock["editable"] != [EDITABLE] or lock["objective"] != "minimum_test_mouse_mean_log_loss":
+    if set(lock) != {"version", "editable", "editable_config_fields", "fixed_config",
+                     "objective", "fixed_sha256"} or lock["version"] != 4:
+        raise ValueError("Invalid model research protocol; version 4 requires a fresh session/baseline")
+    if (lock["editable"] != list(EDITABLE) or lock["editable_config_fields"] != list(EDITABLE_CONFIG_FIELDS)
+            or lock["objective"] != "minimum_test_mouse_mean_log_loss"):
         raise ValueError("Unsupported research scope or objective")
     actual = {name: sha256(root / name) for name in controlled_files(root)}
     if actual != lock["fixed_sha256"]:
         changed = sorted(name for name in set(actual) | set(lock["fixed_sha256"])
                          if actual.get(name) != lock["fixed_sha256"].get(name))
         raise ValueError(f"Fixed research controls changed: {changed}")
+    from meta_learning.config import Config
+    config = Config.load(root / "configs/meta.json").to_dict()
+    fixed_config = {key: value for key, value in config.items() if key not in EDITABLE_CONFIG_FIELDS}
+    if fixed_config != lock["fixed_config"]:
+        changed = sorted(key for key in set(fixed_config) | set(lock["fixed_config"])
+                         if fixed_config.get(key) != lock["fixed_config"].get(key))
+        raise ValueError(f"Fixed research configuration changed: {changed}")
     return lock
 
 
-def snapshot(destination, root=ROOT):
-    root, destination = Path(root), Path(destination)
+def snapshot(destination, root=None):
+    root, destination = Path(ROOT if root is None else root), Path(destination)
     lock = verify_protocol(root)
-    names = sorted([*lock["fixed_sha256"], EDITABLE, "protocol.lock.json", "README.md"])
+    names = sorted([*lock["fixed_sha256"], *EDITABLE, "protocol.lock.json", "README.md"])
     hashes = {name: sha256(root / name) for name in names}
     for name in names:
         target = destination / name
@@ -99,9 +113,9 @@ def snapshot(destination, root=ROOT):
 def verify_snapshot(experiment):
     experiment = Path(experiment)
     hashes = read_json(experiment / "snapshot.json")
-    # The manifest must cover the full current snapshot inventory, including frontend.
+    # Every candidate source and its complete configuration belong to the snapshot.
     lock = verify_protocol(experiment / "source")
-    names = {*lock["fixed_sha256"], EDITABLE, "protocol.lock.json", "README.md"}
+    names = {*lock["fixed_sha256"], *EDITABLE, "protocol.lock.json", "README.md"}
     if set(hashes) != names or any(sha256(experiment / "source" / name) != hashes[name] for name in names):
         raise ValueError("Experiment source snapshot changed")
     return hashes
@@ -139,14 +153,13 @@ def worker(command, cwd, log, timeout):
 
 def session_identity(args):
     from meta_learning.common import resolve_device, runtime_identity
-    from meta_learning.config import Config
     from prepare import load_dataset
 
     lock = verify_protocol()
     dataset = load_dataset(args.prepared_dir, args.data_dir)
     device = resolve_device(args.device)
     return dict(protocol_sha256=digest(lock), source_inventory_sha256=digest(dataset.signature),
-                config=Config.load(ROOT / "configs/meta.json").to_dict(), runtime=runtime_identity(device),
+                fixed_config=lock["fixed_config"], runtime=runtime_identity(device),
                 timeout_seconds=args.timeout_seconds)
 
 
@@ -155,7 +168,7 @@ def ensure_session(args):
     path = args.run_dir / "session.json"
     if path.exists():
         if read_json(path)["identity"] != identity:
-            raise ValueError("Use a new session: protocol, data, config, runtime, or watchdog differs")
+            raise ValueError("Use a new session: protocol, data, fixed config, runtime, or watchdog differs")
     else:
         if (args.run_dir / "experiments").exists():
             raise ValueError("Experiments exist without session metadata")
@@ -164,6 +177,8 @@ def ensure_session(args):
 
 
 def experiment(args):
+    from meta_learning.config import Config
+
     identity = ensure_session(args)
     if args.resume is not None:
         directory = experiment_dir(args.run_dir, args.resume)
@@ -183,11 +198,17 @@ def experiment(args):
         hashes = snapshot(directory / "source")
         attempt = dict(experiment=directory.name, description=args.description.strip(),
                        commit=current_commit(),
-                       frontend_sha256=hashes[EDITABLE], session_identity=identity, created_utc=timestamp())
+                       candidate_sha256={name: hashes[name] for name in EDITABLE},
+                       config=Config.load(directory / "source/configs/meta.json").to_dict(),
+                       session_identity=identity, created_utc=timestamp())
         write_json(directory / "experiment.json", attempt)
+    candidate_config = Config.load(directory / "source/configs/meta.json").to_dict()
+    if candidate_config != attempt["config"] or attempt["candidate_sha256"] != {
+            name: hashes[name] for name in EDITABLE}:
+        raise ValueError("Candidate sources/configuration differ from their saved experiment")
     source = directory / "source"
     started = time.monotonic()
-    result = {key: attempt[key] for key in ("experiment", "description", "commit", "frontend_sha256")}
+    result = {key: attempt[key] for key in ("experiment", "description", "commit", "candidate_sha256", "config")}
     result.update(attempt=timestamp(), resumed=args.resume is not None)
     attempt_path = directory / "attempts" / f"{result['attempt']}.json"
     write_json(attempt_path, dict(result, status="running"))
@@ -208,8 +229,10 @@ def experiment(args):
         status = read_json(directory / "status.json")
         selection = read_json(directory / "selection.json")
         if status["status"] != "complete":
-            raise ValueError("Training did not complete its fixed budget")
-        expected_role = "query" if identity["config"]["selection_validation_days"] is None else "valid"
+            raise ValueError("Training did not complete its declared candidate budget")
+        if status["step"] != candidate_config["outer_steps"]:
+            raise ValueError("Training did not complete the declared number of outer steps")
+        expected_role = "query" if candidate_config["selection_validation_days"] is None else "valid"
         if selection["role"] != expected_role:
             raise ValueError("Unexpected checkpoint selection role")
         selected_test = selection["test"]["aggregate"]

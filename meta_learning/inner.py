@@ -9,7 +9,7 @@ from torch.func import functional_call
 from torch.autograd.function import once_differentiable
 from torch.nn import functional as F
 
-from models.cnn import AxisBatchNorm
+from models.normalization import AxisBatchNorm
 
 
 @dataclass
@@ -44,7 +44,7 @@ def training_classifier(reference, config):
     for layer in training.modules():
         if isinstance(layer, AxisBatchNorm):
             layer.differentiable_stats = True
-        elif isinstance(layer, torch.nn.Dropout):
+        elif isinstance(layer, torch.nn.modules.dropout._DropoutNd):
             layer.p = config.classifier_dropout
     return training
 
@@ -238,7 +238,7 @@ def calibrate_batchnorm(reference, parameters, buffers, features):
     for layer in calibrating.modules():
         if isinstance(layer, AxisBatchNorm):
             layer.momentum, layer.differentiable_stats = 0.0, True
-        elif isinstance(layer, torch.nn.Dropout):
+        elif isinstance(layer, torch.nn.modules.dropout._DropoutNd):
             layer.p = 0.0
     _, updated = functional_call(_SupportForward(calibrating),
         ({f"classifier.{name}": value for name, value in parameters.items()},

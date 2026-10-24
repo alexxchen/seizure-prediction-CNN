@@ -14,7 +14,7 @@ class MetaModel(nn.Module):
         self.cnn = self._new_classifier(cnn_seed)
 
     def cnn_input_shape(self):
-        """Keep classifier architecture and reference weights identical across candidates."""
+        """Use the candidate frontend's declared channel/time interface."""
         return CNN_INPUT_SHAPE
 
     def _new_classifier(self, seed):

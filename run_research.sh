@@ -7,12 +7,12 @@ if [[ "$action" == help || "$action" == --help || "$action" == -h ]]; then
     cat <<'HELP'
 Usage: ./run_research.sh [prepare|check|experiment|replay] [OPTIONS]
   prepare     Verify raw recording and annotation identities
-  check       Verify fixed controls and run synthetic frontend contract checks
+  check       Verify fixed controls and synthetic frontend/CNN gradient contracts
   experiment  Run one candidate and print metrics; the agent logs and keeps/discards it
   replay      Inference from --experiment ID --split query|valid|test
 
 Experiment options: --description TEXT [--resume EXPERIMENT_ID]
-                    --timeout-seconds N (default 12000; fixed epoch budget)
+                    --timeout-seconds N (default 12000; declared candidate budget)
 Launcher options: --device auto|cuda|cpu --dry-run
 Environment: DATA_DIR, PREPARED_DIR, CACHE_DIR, OUTPUT_DIR, IMAGE_NAME,
              TRAIN_CPU_THREADS (default 4)

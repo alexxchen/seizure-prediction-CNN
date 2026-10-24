@@ -170,6 +170,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                for mouse in config.targets}
     episodes = {mouse: split_episode(training[mouse], queries[mouse]) for mouse in config.targets}
     query_events, task_weights = query_task_weights(queries, episodes)
+    model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size)
     provenance = dict(config=config.to_dict(), source_sha256=source_hashes(),
                       source_inventory_sha256=digest(verify_prepared(prepared_dir)["signature"]),
                       training_fingerprints={mouse: split.fingerprint for mouse, split in training.items()},
@@ -187,7 +188,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       waveform_config=WAVEFORM_CONFIG,
                       frontend_config=dict(FRONTEND_CONFIG, checkpoint_batch_size=config.frontend_batch_size),
                       day_splits=DAY_SPLITS, cnn_input_shape=list(CNN_INPUT_SHAPE),
-                      cnn="1-D CNN: three Conv1d/AxisBatchNorm/max-pool stages (32, 32, 32), flatten, dense 128, 2 logits",
+                      cnn=dict(architecture=repr(model.cnn),
+                               parameters=sum(parameter.numel() for parameter in model.cnn.parameters())),
                       task_schedule=dict(mice="Every configured mouse exactly once per outer step",
                                          mouse_order=list(config.targets),
                                          tasks_per_step=len(config.targets),
@@ -254,7 +256,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
     seed_everything(config.seed)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
-    model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size).to(device)
+    model = model.to(device)
     model.cnn.requires_grad_(False)
     outer_parameters = list(model.frontend.parameters())
     # Decoupled weight decay applies only to frontend weight matrices (not biases or norms).

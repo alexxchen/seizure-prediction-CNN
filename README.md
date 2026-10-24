@@ -1,10 +1,12 @@
-# MouseLFP frontend autoresearch
+# MouseLFP model and optimization autoresearch
 
 Learn a shared waveform frontend for predicting seizure-related labels across recording days of the same mouse. Only frontend weights receive outer updates. Every task and per-mouse evaluation fits a fresh CNN from a fixed, unlearned reference.
 
 ## Autoresearch workflow
 
-This branch adapts `seizure-single-channel-auto-research` to shared-frontend meta-learning. The research agent edits only `meta_learning/frontend.py`; the task CNN, fixed reference initialization, SGD fitting, outer solver, data/crops, budgets, and evaluation code are locked. The frontend's entire internal design is editable, including learned or spectral transforms, architecture, sample-local normalization, and initialization. Its output must remain `(N, 64, 256)` so the CNN's architecture and seeded starting weights stay identical.
+This branch adapts `seizure-single-channel-auto-research` to shared-frontend meta-learning. Protocol version 4 opens `meta_learning/frontend.py`, `models/cnn.py`, and an explicit optimization-field allowlist in `configs/meta.json`. Both model architectures and their unlearned initialization are editable. The frontend accepts fixed `(N, 28672)` waveforms and declares its positive `(channels, time)` output shape; the candidate CNN consumes that interface and emits two logits. Each candidate still fits a fresh CNN per mouse, and only frontend parameters receive outer updates.
+
+Editable optimization fields are `outer_steps`, `inner_epochs`, `inner_lr`, `inner_weight_decay`, `classifier_dropout`, `outer_lr`, `outer_weight_decay`, `batch_size`, `frontend_batch_size`, `label_smoothing`, and `gradient_clip`. This includes frontend weight decay. The training/solver implementation, data/crops, targets/seeds, evaluation frequency, selection rules, and all other configuration fields remain locked. Inner plain SGD and outer AdamW remain the solver families. `models/normalization.py` owns the locked differentiable support-only BatchNorm implementation; CNNs may use it or stateless normalization, and configured classifier dropout is supported.
 
 **Objective: minimize the equal-mouse-mean test log loss on Days 12/13.** The user explicitly designated these days as a development set for frontend research. Accuracy at threshold 0.5, AUC, sensitivity, and specificity are supporting metrics. Each candidate first selects its checkpoint by the existing query/valid log-loss rule; the candidate's development-test score at that checkpoint controls `keep`/`discard`. Test labels never supply training gradients, CNN updates, or within-run checkpoint selection. The first successful baseline is kept; subsequent loss must be strictly lower. Search results and final replay are development results, not an untouched generalization estimate.
 
@@ -17,10 +19,10 @@ Start each study on a fresh `autoresearch/<tag>` branch from a clean, committed 
 ```bash
 export OUTPUT_DIR="$PWD/autoresearch-runs/<tag>"
 parent=$(git rev-parse HEAD)
-# Edit only meta_learning/frontend.py.
+# Edit the frontend, CNN, and/or allowed optimization fields.
 ./run_research.sh check
-git add meta_learning/frontend.py
-git commit -m 'frontend hypothesis'
+git add meta_learning/frontend.py models/cnn.py configs/meta.json
+git commit -m 'model or optimization hypothesis'
 ./run_research.sh experiment --description 'frontend hypothesis' > "$OUTPUT_DIR/run.log" 2>&1
 # Wait for completion, then let the agent read and analyze the result.
 # Append its score and keep/discard/crash decision to results.tsv.
@@ -28,13 +30,13 @@ git commit -m 'frontend hypothesis'
 
 Retain an improved candidate's commit. For `discard` or an abandoned `crash`, use `git reset --hard "$parent"` after recording the result and verifying the working tree is clean. Then choose the next hypothesis from the result.
 
-Initialize the output directory and ledger, prepare data if needed, and run the unchanged frontend baseline before testing ideas; see `program.md` for setup. Compare full-precision losses from saved results. The branch tip tracks the best kept frontend; the ledger records all attempts, including discarded/crashed commits. Threshold-0.5 accuracy accompanies loss in progress reports and detailed artifacts. Reset only the current candidate's own commits on the dedicated study branch, preserving unrelated changes, untracked results, and all historical artifacts.
+Initialize the output directory and ledger, preserving any previous ledger with its old study artifacts. Prepare data if needed, and run the unchanged initial model/configuration baseline before testing ideas; see `program.md` for setup. Compare full-precision losses from saved results. The branch tip tracks the best kept candidate; the ledger records all attempts, including discarded/crashed commits. Threshold-0.5 accuracy accompanies loss in progress reports and detailed artifacts. Reset only the current candidate's own commits on the dedicated study branch, preserving unrelated changes, untracked results, and all historical artifacts.
 
-All research commands run in the foreground. `--dry-run` prints a launcher command without creating directories or running Docker. `--timeout-seconds` defaults to 12,000 seconds per candidate attempt; it is a failure watchdog, never early stopping. The configured 50 outer steps and 40 complete inner epochs stay fixed across candidates. Use a new session for a different protocol, source inventory, runtime, or watchdog. A study uses the four configured mice X1/X2/X9/X14.
+All research commands run in the foreground. `--dry-run` prints a launcher command without creating directories or running Docker. `--timeout-seconds` defaults to 12,000 seconds per candidate attempt; it is a failure watchdog, never early stopping. The initial configuration remains 50 outer steps and 40 complete inner epochs. A candidate may explicitly change its declared optimization budget, but must complete it without early stopping or budget changes within the run. Record runtime and configuration: different budgets are not equal-compute comparisons. Use a new session for a different protocol, fixed configuration, source inventory, runtime, or watchdog. A study uses the four configured mice X1/X2/X9/X14.
 
-`protocol.lock.json` checks fixed file hashes and rejects extra executable modules in controlled directories. Synthetic `check` verifies waveform/output shape, initialization RNG preservation, reproducibility, silence, sample/chunk independence, persistent state, and frontend gradients. These checks detect common implementation mistakes; candidates are trusted research code and the checks are not a security sandbox.
+`protocol.lock.json` checks fixed file hashes, enforces the JSON field allowlist, and rejects extra executable modules in controlled directories. Synthetic `check` verifies waveform/output shape, initialization RNG preservation, reproducibility, silence, sample/chunk independence, persistent state, frontend gradients, CNN logits, and a tiny checkpointed support/query hypergradient. These checks detect common implementation mistakes; candidates are trusted research code and the checks are not a security sandbox.
 
-Each candidate executes an immutable copied source tree, so later working-tree edits cannot change a running experiment. Artifacts include `session.json`, `experiments/<id>/experiment.json`, `snapshot.json`, `contract.log`, `train.log`, `result.json`, immutable per-attempt records in `attempts/`, and the training artifacts described below. `result.json` contains both query/valid selection metrics and development-test metrics, plus execution status (`complete` or `crash`). Crashes preserve snapshots, logs, and checkpoints. The runner leaves the agent's `results.tsv` untouched and maintains no cross-candidate best record. Resume the same candidate from its saved source with:
+Each candidate executes an immutable copied source tree, so later working-tree edits cannot change a running experiment. All editable files and the complete resolved candidate configuration are fingerprinted and saved per experiment; only fixed configuration fields belong to the session identity. Artifacts include `session.json`, `experiments/<id>/experiment.json`, `snapshot.json`, `contract.log`, `train.log`, `result.json`, immutable per-attempt records in `attempts/`, and the training artifacts described below. `result.json` contains both query/valid selection metrics and development-test metrics, candidate hashes/configuration, and execution status (`complete` or `crash`). Crashes preserve snapshots, logs, and checkpoints. The runner leaves the agent's `results.tsv` untouched and maintains no cross-candidate best record. Resume the same candidate from its saved source/configuration, even if the working candidate's optimization settings have changed, with:
 
 ```bash
 ./run_research.sh experiment --resume <experiment-id>
@@ -48,7 +50,7 @@ Replay a specific experiment's saved code and CNN/BatchNorm weights without fitt
 
 Choose `query`, `valid`, or `test`; `valid` requires selection days. The ledger's commit identifies the candidate in its saved `experiment.json`. Study continuation uses Git history and the ledger; stopping leaves the session open.
 
-Protocol version 3 locks the RTX 5090 runtime (PyTorch 2.14.1/CUDA 13.0), both research launchers, and LF line endings for identical byte hashes on Windows and Linux. Training remains at 50 outer steps and 40 complete inner epochs. Start a fresh session and baseline under this protocol. Existing sessions and snapshots retain their original files and remain available through their original code/runtime.
+Protocol version 4 is a deliberate scope expansion to frontend/CNN architecture and optimization parameters. It retains the RTX 5090 runtime (PyTorch 2.14.1/CUDA 13.0), both launchers, LF line endings, data isolation, full hypergradients, and scoring controls. Start a fresh session and baseline under this protocol. Version-3 sessions and snapshots retain their original files and remain available through their original saved code/runtime; do not refresh their locks or reuse their session directory for version 4. This protocol edit does not start training.
 
 Local equivalents use the existing pinned dependencies:
 
@@ -58,7 +60,7 @@ python research.py experiment --run-dir autoresearch-runs/local --data-dir /path
   --prepared-dir /path/to/prepared --cache-dir /path/to/cache --device cuda --description baseline
 ```
 
-The remaining sections describe the fixed trainer and the initial frontend baseline. Architectural statements about this baseline do not restrict subsequent frontend candidates.
+The remaining sections describe the fixed trainer and current model/configuration baseline. Architectural statements describe the baseline and do not restrict subsequent model candidates.
 
 ## Data and roles
 
@@ -81,32 +83,26 @@ The sample recipe uses 112-second windows, positive windows in the 7-3 minutes b
 
 Fixed preprocessing removes each window's mean, resamples from 500 to 256 Hz, and zero-pads to 28,672 samples. These waveforms are cached by `meta_learning/waveform.py`; there are no fitted dataset or task normalization statistics.
 
-Inside the frontend, each window is divided by its own RMS. Peak-scaled arithmetic avoids overflow/underflow across input units; a silent window yields a zero normalized waveform with finite gradients. There is no fixed 0.01 multiplier, amplitude branch, or gain augmentation.
+In the current frontend baseline, each window is divided by its own RMS, then compressed with `asinh`. Peak-scaled arithmetic avoids overflow/underflow across input units; a silent window yields a zero normalized waveform with finite gradients. There is no fixed 0.01 multiplier, amplitude branch, or gain augmentation.
 
 ```text
 waveform / window RMS                        (28,672 samples)
+-> asinh                                     (28,672 samples)
 -> Conv1d(1->16, k8, s4)                      7,168
--> ResBlock(16) -> Conv1d(16->32, k2, s2)      3,584
--> ResBlock(32) -> Conv1d(32->48, k2, s2)      1,792
--> ResBlock(48) -> Conv1d(48->64, k7, s7)      256
--> ResBlock(64) -> Conv1d(64->64, k1, s1)      256
+-> ResBlock(16) -> Conv1d(16->32, k5, s2)      3,584
+-> ResBlock(32) -> Conv1d(32->48, k5, s2)      1,792
+-> ResBlock(48) -> Conv1d(48->64, k15, s7)     256
+-> ResBlock(64) -> Conv1d(64->64, k3, s1)      256
 -> ResBlock(64) -> ResBlock(64, dilation 2)
 -> GroupNorm(8) -> GELU -> Conv1d(64->64, k1)
 -> 64 channels x 256 time bins
 ```
 
-Each pre-activation residual block uses GroupNorm/GELU and two k3 convolutions; its final convolution is zero-initialized. The residual stream carries the RMS-normalized waveform. The frontend has 131,296 parameters, no BatchNorm or dropout, and features depend only on their own window. Seeded frontend and CNN initialization preserve caller CPU/CUDA RNG streams. `frontend_batch_size` controls window chunks independently of CNN `batch_size`.
+Each baseline pre-activation residual block uses GroupNorm/GELU and two k3 convolutions; its final convolution is zero-initialized. Downsampling kernels overlap, with padding equal to their stride. The frontend has 170,208 parameters, no BatchNorm or dropout, and features depend only on their own window. Seeded frontend and CNN initialization preserve caller CPU/CUDA RNG streams. `frontend_batch_size` controls window chunks independently of CNN `batch_size`.
 
 The task CNN convolves time, mixing feature channels directly: AxisBatchNorm -> Conv1d(64->32, k5, s2) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->32, k3) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->32, k3) -> ReLU -> max-pool 2 -> flatten (512) -> dropout -> Linear(512->128) -> sigmoid -> dropout -> Linear(128->2). The CNN derives its dense input size from the frontend shape and has 82,658 parameters. `classifier_dropout` defaults to zero. Inference uses softmax with a positive threshold of 0.5.
 
-The 64 x 256 interface is produced by learned convolution strides with a total
-waveform reduction of 112; there is no interpolation or fixed pooling at the
-interface. All three CNN blocks emit 32 channels, with a 512-feature dense input.
-This reduces the CNN from 177,090 to 82,658 parameters relative to the
-64/64/64 classifier, while preserving the frontend and its 64 x 256 output.
-This infrastructure update establishes a new protocol with the 64 x 256 boundary
-and 32/32/32 CNN. Use a fresh research session and establish a matching baseline;
-old session records and immutable source snapshots remain unchanged.
+The baseline's 64 x 256 interface is produced by learned convolution strides with a total waveform reduction of 112. Its three CNN blocks emit 32 channels, with a 512-feature dense input. Protocol version 4 allows candidates to change these architectural choices together, including the frontend channel/time interface. The waveform input and two-logit classifier output remain fixed.
 
 ## Meta-training
 
@@ -143,11 +139,11 @@ Crop preparation uses bounded-memory caches of positive contexts and complete el
 | Inner checkpoint segment | 20 updates | 5 updates |
 | Query / valid days | 8,11 / none | 8 / 11 |
 
-The JSON config explicitly overrides these defaults. It uses inner SGD lr 0.01, outer AdamW lr 0.001, zero inner/outer weight decay, dropout 0, label smoothing 0.1, gradient clipping 5, evaluation every 10 steps, and checkpointing every 25 steps. Preserve explicitly selected budgets when changing code.
+The initial JSON explicitly overrides these defaults. It uses inner SGD lr 0.01, outer AdamW lr 0.001, zero inner/outer weight decay, dropout 0, label smoothing 0.1, gradient clipping 5, evaluation every 10 steps, and checkpointing every 25 steps. Optimization fields listed above may change only as declared candidates. Evaluation/checkpoint frequency, task/data settings, crop policy, and RNG controls remain fixed by the protocol.
 
 ## Commands
 
-The Docker launcher uses `seizure-prediction-cnn:pytorch`, built with PyTorch 2.14.1, CUDA 13.0, and cuDNN 9 for RTX 5090 support. This runtime enables cuDNN for deterministic dilated convolutions, including those generated by convolution double backward. The image disables TF32 to keep standalone CUDA checks consistent with the trainer's FP32 policy. Build it with `docker build -t seizure-prediction-cnn:pytorch .`. Existing containers retain their original image; use the original runtime for their replay and compatible resumption. The version-3 protocol locks the current runtime files; earlier sessions retain their original locks in their source snapshots.
+The Docker launcher uses `seizure-prediction-cnn:pytorch`, built with PyTorch 2.14.1, CUDA 13.0, and cuDNN 9 for RTX 5090 support. This runtime enables cuDNN for deterministic dilated convolutions, including those generated by convolution double backward. The image disables TF32 to keep standalone CUDA checks consistent with the trainer's FP32 policy. Build it with `docker build -t seizure-prediction-cnn:pytorch .`. Existing containers retain their original image; use the original runtime for their replay and compatible resumption. The protocol locks the current runtime files; earlier sessions retain their original locks in their source snapshots.
 
 Raw data lives under `/data/users/jianchen/data/seizure_data`, with shared caches under `/data/users/jianchen/data/seizure_data-cache/meta-learning`. Override `DATA_DIR`, `CACHE_DIR`, `PREPARED_DIR`, `OUTPUT_DIR`, `IMAGE_NAME`, or `TRAIN_CPU_THREADS` as needed. The launcher's default output is `results/waveform-conv-meta`.
 
