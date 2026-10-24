@@ -12,7 +12,7 @@ from meta_learning.waveform import WAVEFORM_CONFIG
 
 
 FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672,
-    input_normalization="Per-window RMS after existing waveform mean removal; no fitted statistics",
+    input_normalization="Per-window RMS then asinh compression after waveform mean removal; no fitted statistics",
     rms_numerics="Peak-scaled RMS computation; dtype-tiny floor and zero output for silence",
     stem="Conv1d(1->16, k8, s4)", stages=[[16, 2], [32, 2], [48, 7], [64, 1], [64, 1]], norm_groups=8,
     stage_note="Each [channels, stride]: one residual block at that width, then a strided Conv1d to the next "
@@ -88,7 +88,7 @@ class WaveformFrontend(nn.Module):
     def forward(self, waveform):
         check_waveform(waveform)
         c = FRONTEND_CONFIG
-        features = self.head(self.body(rms_normalize_waveform(waveform).unsqueeze(1)))
+        features = self.head(self.body(torch.asinh(rms_normalize_waveform(waveform)).unsqueeze(1)))
         if features.shape[2] != c["time_bins"]:
             raise ValueError("Convolution strides do not produce the configured time bins")
         return features
