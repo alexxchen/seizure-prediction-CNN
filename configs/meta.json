@@ -8,7 +8,7 @@
   "inner_shuffle_seed": null,
   "inner_lr": 0.01,
   "inner_weight_decay": 0.0,
-  "classifier_dropout": 0.0,
+  "classifier_dropout": 0.1,
   "outer_lr": 0.001,
   "outer_weight_decay": 0.0,
   "augment_random_crop": true,
