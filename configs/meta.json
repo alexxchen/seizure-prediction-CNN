@@ -10,7 +10,7 @@
   "inner_weight_decay": 0.0,
   "classifier_dropout": 0.1,
   "outer_lr": 0.001,
-  "outer_weight_decay": 0.0,
+  "outer_weight_decay": 1.0,
   "augment_random_crop": true,
   "random_crop_scope": "both",
   "query_crops": 64,
