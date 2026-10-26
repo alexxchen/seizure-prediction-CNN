@@ -14,7 +14,7 @@ To set up a new experiment, work with the user to:
    - `README.md` and `AGENTS.md` — repository context and fixed research rules.
    - `meta_learning/frontend_contract.py`, `meta_learning/model.py`, and `models/normalization.py` — fixed interfaces, initialization wrapper, synthetic checks, and support-only BatchNorm implementation. Do not modify during candidate search.
    - `models/cnn.py` — editable task CNN architecture and initialization.
-   - `configs/meta.json` — editable optimization fields and locked data/evaluation controls; read the version-4 allowlist below.
+   - `configs/meta.json` — editable optimization fields and locked data/evaluation controls; read the version-5 allowlist below.
    - `research.py`, `run_research.sh`, `run_research.ps1`, and `protocol.lock.json` — execution, launchers, snapshots, and protocol controls. Do not modify during candidate search.
    - `prepare.py` — fixed source preparation. Do not modify.
    - `meta_learning/frontend.py` — editable waveform transforms, architecture, normalization, initialization, and declared channel/time output shape.
@@ -26,14 +26,14 @@ Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Protocol version 4 is a deliberate expansion from frontend-only search to model and optimization search. Start a fresh session and baseline; preserve version-3 sessions and replay/resume them with their own saved code/runtime. Editing this protocol does not start a study.
+Protocol version 5 adds the outer objective `query_loss + support_loss_weight * support_loss_after_last_update`. The support term is the mean over the complete fitted support after the last inner update and support-only BatchNorm recalibration, evaluated without dropout or statistics updates. Both losses use configured label smoothing and retain direct frontend gradients and full inner hypergradients. The finite nonnegative coefficient defaults to 0.1; zero restores query-only training. Checkpoint selection remains query/valid predictive log loss. Start a fresh session and baseline; preserve version-3 and version-4 sessions and replay/resume them with their own saved code/runtime. Editing this protocol does not start a study.
 
 Each experiment runs on a single GPU and completes its **declared candidate budget in `configs/meta.json`**. The initial baseline remains 50 outer steps and 40 complete inner epochs, overriding Config defaults of 100 and 50. Budgets are now explicit optimization search variables; do not silently change them or adapt them to intermediate metrics. Every successful candidate must finish its declared full budget. Launch one candidate with `./run_research.sh experiment --description 'your idea'`.
 
 **What you CAN do:**
 - Modify `meta_learning/frontend.py`: architecture, width/depth, kernels, temporal/spectral transforms, nonlinearities, sample-local normalization, initialization, and output channel/time dimensions.
 - Modify `models/cnn.py`: CNN architecture, width/depth, kernels, pooling, dense layers, normalization placement, and seeded unlearned initialization. The CNN consumes the frontend's declared output shape and emits two logits. Stateful BatchNorm must use the locked `models.normalization.AxisBatchNorm`; stateless normalization alternatives are allowed. CNN dropout is controlled by `classifier_dropout` and replay preserves its RNG.
-- Modify only these fields in `configs/meta.json`: `outer_steps`, `inner_epochs`, `inner_lr`, `inner_weight_decay`, `classifier_dropout`, `outer_lr`, `outer_weight_decay`, `batch_size`, `frontend_batch_size`, `label_smoothing`, and `gradient_clip`. In particular, frontend AdamW weight decay is now searchable. Record complete configuration and runtime per candidate; changed budgets are not equal-compute comparisons.
+- Modify only these fields in `configs/meta.json`: `outer_steps`, `inner_epochs`, `inner_lr`, `inner_weight_decay`, `classifier_dropout`, `outer_lr`, `outer_weight_decay`, `support_loss_weight`, `batch_size`, `frontend_batch_size`, `label_smoothing`, and `gradient_clip`. In particular, frontend AdamW weight decay is now searchable. Record complete configuration and runtime per candidate; changed budgets are not equal-compute comparisons.
 - The initial retained RMS/asinh ResNet and current CNN are baselines, not architectural constraints. All three editable files are snapshotted and fingerprinted for each candidate. Only fixed configuration fields belong to the session identity, so allowed optimization candidates can share a study; resume/replay always uses the saved candidate's exact sources and full configuration.
 
 **What you CANNOT do:**

@@ -163,7 +163,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
             raise ValueError("Resume requires identical config, sources, and runtime")
     training = {mouse: (store.load_crops(mouse, "train") if crops_support(config) else
                         store.load(mouse, "train")) for mouse in config.targets}
-    # Only the configured query days supply outer gradients; selection days stay held out.
+    # Query days and the final-support auxiliary loss supply outer gradients; selection stays held out.
     queries = {mouse: (store.load_crops(mouse, "validation", days=config.query_validation_days)
                       if crops_query(config) else
                       store.load(mouse, "validation").subset_days(config.query_validation_days))
@@ -183,6 +183,12 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       selection_criterion=selection_criterion(config),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
                                        "on frontend weight matrices; frontend biases and normalization parameters undecayed"),
+                      outer_objective=dict(formula="query_loss + support_loss_weight * support_loss_after_last_update",
+                                           support_loss_weight=config.support_loss_weight,
+                                           support="Mean over all fitted support samples after the final inner update, "
+                                                   "in eval mode with final support-only BatchNorm statistics",
+                                           label_smoothing=config.label_smoothing,
+                                           gradients="Direct frontend paths and full inner-trajectory hypergradients"),
                       runtime=runtime_identity(device), sample_config=sample_pipeline.SAMPLE_CONFIG,
                       offsets_seconds=(sample_pipeline.sample_offsets()[1] / 500).tolist(),
                       waveform_config=WAVEFORM_CONFIG,
@@ -227,7 +233,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       classifier_seed=config.seed,
                       frontend_seed=config.seed,
                       adaptation="Fresh CNN; frozen frontend; same fixed epoch budget as inner training",
-                      inner_stopping="Fixed epoch budget; no early stopping; final epoch classifier; support metrics are diagnostic only",
+                      inner_stopping="Fixed epoch budget; no early stopping; final epoch classifier; intermediate support metrics are diagnostic only",
                       meta_gradient="Full unrolled frontend hypergradient through every fixed-epoch update with RNG-preserving segment checkpointing")
     identity = digest(provenance)
     if resume:
@@ -335,6 +341,15 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
             row = dict(step=step, mice=list(config.targets), tasks=len(losses),
                        query_events=query_events, outer_task_weights=task_weights,
                        outer_loss=float(sum(losses)), gradient_norm=float(grad_norm))
+            objective_subjects = {fit["mouse"]: fit["outer_objective"] for fit in inner_reports}
+            row["outer_objective"] = dict(
+                support_loss_weight=config.support_loss_weight, timing="before_outer_update",
+                aggregation="Eligible query-event weighted across mice",
+                aggregate={key: float(sum(task_weights[mouse] * metrics[key]
+                                          for mouse, metrics in objective_subjects.items()))
+                           for key in ("query_loss", "support_loss_after_last_update",
+                                       "weighted_support_loss", "total_loss")},
+                subjects=objective_subjects)
             subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
             aggregate = {key: float(sum(task_weights[mouse] * metrics[key]
                                        for mouse, metrics in subjects.items()))

@@ -4,9 +4,9 @@ Learn a shared waveform frontend for predicting seizure-related labels across re
 
 ## Autoresearch workflow
 
-This branch adapts `seizure-single-channel-auto-research` to shared-frontend meta-learning. Protocol version 4 opens `meta_learning/frontend.py`, `models/cnn.py`, and an explicit optimization-field allowlist in `configs/meta.json`. Both model architectures and their unlearned initialization are editable. The frontend accepts fixed `(N, 28672)` waveforms and declares its positive `(channels, time)` output shape; the candidate CNN consumes that interface and emits two logits. Each candidate still fits a fresh CNN per mouse, and only frontend parameters receive outer updates.
+This branch adapts `seizure-single-channel-auto-research` to shared-frontend meta-learning. Protocol version 5 opens `meta_learning/frontend.py`, `models/cnn.py`, and an explicit optimization-field allowlist in `configs/meta.json`. Both model architectures and their unlearned initialization are editable. The frontend accepts fixed `(N, 28672)` waveforms and declares its positive `(channels, time)` output shape; the candidate CNN consumes that interface and emits two logits. Each candidate still fits a fresh CNN per mouse, and only frontend parameters receive outer updates.
 
-Editable optimization fields are `outer_steps`, `inner_epochs`, `inner_lr`, `inner_weight_decay`, `classifier_dropout`, `outer_lr`, `outer_weight_decay`, `batch_size`, `frontend_batch_size`, `label_smoothing`, and `gradient_clip`. This includes frontend weight decay. The training/solver implementation, data/crops, targets/seeds, evaluation frequency, selection rules, and all other configuration fields remain locked. Inner plain SGD and outer AdamW remain the solver families. `models/normalization.py` owns the locked differentiable support-only BatchNorm implementation; CNNs may use it or stateless normalization, and configured classifier dropout is supported.
+Editable optimization fields are `outer_steps`, `inner_epochs`, `inner_lr`, `inner_weight_decay`, `classifier_dropout`, `outer_lr`, `outer_weight_decay`, `support_loss_weight`, `batch_size`, `frontend_batch_size`, `label_smoothing`, and `gradient_clip`. This includes frontend weight decay. The training/solver implementation, data/crops, targets/seeds, evaluation frequency, selection rules, and all other configuration fields remain locked. Inner plain SGD and outer AdamW remain the solver families. `models/normalization.py` owns the locked differentiable support-only BatchNorm implementation; CNNs may use it or stateless normalization, and configured classifier dropout is supported.
 
 **Objective: minimize the equal-mouse-mean test log loss on Days 12/13.** The user explicitly designated these days as a development set for frontend research. Accuracy at threshold 0.5, AUC, sensitivity, and specificity are supporting metrics. Each candidate first selects its checkpoint by the existing query/valid log-loss rule; the candidate's development-test score at that checkpoint controls `keep`/`discard`. Test labels never supply training gradients, CNN updates, or within-run checkpoint selection. The first successful baseline is kept; subsequent loss must be strictly lower. Search results and final replay are development results, not an untouched generalization estimate.
 
@@ -50,7 +50,7 @@ Replay a specific experiment's saved code and CNN/BatchNorm weights without fitt
 
 Choose `query`, `valid`, or `test`; `valid` requires selection days. The ledger's commit identifies the candidate in its saved `experiment.json`. Study continuation uses Git history and the ledger; stopping leaves the session open.
 
-Protocol version 4 is a deliberate scope expansion to frontend/CNN architecture and optimization parameters. It retains the RTX 5090 runtime (PyTorch 2.14.1/CUDA 13.0), both launchers, LF line endings, data isolation, full hypergradients, and scoring controls. Start a fresh session and baseline under this protocol. Version-3 sessions and snapshots retain their original files and remain available through their original saved code/runtime; do not refresh their locks or reuse their session directory for version 4. This protocol edit does not start training.
+Protocol version 5 adds a tunable final-support auxiliary loss to the outer objective. It retains model/optimization search, the RTX 5090 runtime (PyTorch 2.14.1/CUDA 13.0), both launchers, LF line endings, data isolation, full hypergradients, and scoring controls. Start a fresh session and baseline under this protocol. Version-3 and version-4 sessions and snapshots retain their original files and remain available through their original saved code/runtime; do not refresh their locks or reuse their session directories for version 5. This protocol edit does not start training.
 
 Local equivalents use the existing pinned dependencies:
 
@@ -68,7 +68,7 @@ Supported mice are X1/X2/X4/X9/X10/X14/X15. The current configuration trains X1/
 
 | Role | Days | Use |
 | --- | --- | --- |
-| Support | 0-7 | Inner CNN updates and support-only BatchNorm calibration |
+| Support | 0-7 | Inner CNN updates, support-only BatchNorm calibration, and final-support outer regularization |
 | Query | 8/11 | Outer frontend gradients and current checkpoint selection |
 | Valid | Optional disjoint subset of Days 8/11 | Checkpoint selection only |
 | Test (development) | 12/13 | Inference within each run; frontend candidate ranking across runs |
@@ -100,22 +100,22 @@ waveform / window RMS                        (28,672 samples)
 
 Each baseline pre-activation residual block uses GroupNorm/GELU and two k3 convolutions; its final convolution is zero-initialized. Downsampling kernels overlap, with padding equal to their stride. The frontend has 170,208 parameters, no BatchNorm or dropout, and features depend only on their own window. Seeded frontend and CNN initialization preserve caller CPU/CUDA RNG streams. `frontend_batch_size` controls window chunks independently of CNN `batch_size`.
 
-The task CNN convolves time, mixing feature channels directly: AxisBatchNorm -> Conv1d(64->32, k5, s2) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->32, k3) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->32, k3) -> ReLU -> max-pool 2 -> flatten (512) -> dropout -> Linear(512->128) -> sigmoid -> dropout -> Linear(128->2). The CNN derives its dense input size from the frontend shape and has 82,658 parameters. `classifier_dropout` defaults to zero. Inference uses softmax with a positive threshold of 0.5.
+The task CNN convolves time, mixing feature channels directly: AxisBatchNorm -> Conv1d(64->32, k5, s2) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->32, k3) -> ReLU -> max-pool 2 -> AxisBatchNorm -> Conv1d(32->32, k3) -> ReLU -> max-pool 2 -> temporal mean (32) -> dropout -> Linear(32->128) -> sigmoid -> dropout -> Linear(128->2). The retained CNN has 21,218 parameters. `classifier_dropout` is configured as 0.1. Inference uses softmax with a positive threshold of 0.5.
 
-The baseline's 64 x 256 interface is produced by learned convolution strides with a total waveform reduction of 112. Its three CNN blocks emit 32 channels, with a 512-feature dense input. Protocol version 4 allows candidates to change these architectural choices together, including the frontend channel/time interface. The waveform input and two-logit classifier output remain fixed.
+The baseline's 64 x 256 interface is produced by learned convolution strides with a total waveform reduction of 112. Its three CNN blocks emit 32 channels, with a 32-feature dense input after temporal mean pooling. Protocol version 5 allows candidates to change these architectural choices together, including the frontend channel/time interface. The waveform input and two-logit classifier output remain fixed.
 
 ## Meta-training
 
 1. Each mouse has one fixed task: all eligible support Days 0-7 and its configured query days. Every outer step visits each configured mouse once, in target order.
 2. Fit a task-local CNN for exactly `inner_epochs` complete shuffled epochs with plain SGD, learning rate `inner_lr`, without momentum. There is no early stopping or best-epoch rollback. The frontend is held fixed during that fit; the complete fit remains differentiable.
-3. Query labels supervise the frontend through both the query features and every support-training update. Average query loss within each represented event, then across events. Weight each mouse's gradient by its eligible positive query-event count divided by the total count, before crop expansion and optional per-class caps. Update the frontend once after all tasks.
+3. The outer objective for each mouse is `query_loss + support_loss_weight * support_loss_after_last_update`. Average query loss within each represented event, then across events. Evaluate the support term over all samples used in that inner fit after its final update and support-only BatchNorm recalibration, with dropout disabled and no statistics updates. Both losses use configured label smoothing and preserve direct frontend gradients and full hypergradients through the inner fit. `support_loss_weight` defaults to 0.1, accepts finite nonnegative values, and zero restores query-only training. Weight each mouse's complete objective by its eligible positive query-event count divided by the total count, before crop expansion and optional per-class caps. Update the frontend once after all tasks. Logs keep the query loss, final-support loss, weighted support term, and total objective separate.
 4. Outer AdamW uses `outer_lr`; decoupled `outer_weight_decay` applies only to frontend weight matrices, excluding biases and normalization parameters. `inner_weight_decay` adds an L2 pull toward detached reference CNN weights after inner gradient clipping.
 5. At every `eval_every` interval and the final step, freeze the frontend and fit one fresh CNN per mouse with the same support policy, SGD solver, and epoch budget. Score query, optional valid, and test without gradients.
 6. Select the checkpoint with minimum mouse-mean predictive log loss on valid days, or query days when no separate valid days are configured. Test never selects checkpoints within a run; autoresearch uses the selected checkpoint's test loss to rank frontend candidates. Outer training uses label smoothing; selection uses ordinary unsmoothed predictive log loss.
 
 Support training uses normal CNN BatchNorm batch statistics and task-local running means/variances. Query/test use eval mode. Each fit ends with exact full-support BatchNorm recalibration using the final weights (`batchnorm_recalibration=true`); this is differentiable in the meta path. The full support-only EMA trajectory and recalibration contribute to the hypergradient. Query inference and backward replay never mutate saved/reference statistics.
 
-RNG-preserving segment checkpointing keeps the full inner trajectory without truncating hypergradients. `inner_checkpoint_steps=0` disables replay for small diagnostic checks. `inner_shuffle_seed=null` draws fresh window order and minibatch shuffles; an integer fixes each task's sampling and shuffles without advancing caller RNG streams. Support metrics are diagnostic only. `inner_log_every=0` measures initialization and the final epoch; a positive value also measures the first epoch and each configured interval.
+RNG-preserving segment checkpointing keeps the full inner trajectory without truncating hypergradients. `inner_checkpoint_steps=0` disables replay for small diagnostic checks. `inner_shuffle_seed=null` draws fresh window order and minibatch shuffles; an integer fixes each task's sampling and shuffles without advancing caller RNG streams. Intermediate support metrics are diagnostic only; the final recalibrated support loss also supplies the explicit outer regularizer. `inner_log_every=0` measures initialization and the final epoch; a positive value also measures the first epoch and each configured interval.
 
 ### Random crops
 
@@ -139,7 +139,7 @@ Crop preparation uses bounded-memory caches of positive contexts and complete el
 | Inner checkpoint segment | 20 updates | 5 updates |
 | Query / valid days | 8,11 / none | 8 / 11 |
 
-The initial JSON explicitly overrides these defaults. It uses inner SGD lr 0.01, outer AdamW lr 0.001, zero inner/outer weight decay, dropout 0, label smoothing 0.1, gradient clipping 5, evaluation every 10 steps, and checkpointing every 25 steps. Optimization fields listed above may change only as declared candidates. Evaluation/checkpoint frequency, task/data settings, crop policy, and RNG controls remain fixed by the protocol.
+The initial JSON explicitly overrides these defaults. It uses inner SGD lr 0.01, outer AdamW lr 0.001, inner weight decay 0, outer weight decay 1.0, dropout 0.1, support-loss weight 0.1, label smoothing 0.1, gradient clipping 5, evaluation every 10 steps, and checkpointing every 25 steps. Optimization fields listed above may change only as declared candidates. Evaluation/checkpoint frequency, task/data settings, crop policy, and RNG controls remain fixed by the protocol.
 
 ## Commands
 

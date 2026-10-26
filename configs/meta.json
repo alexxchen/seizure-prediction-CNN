@@ -11,6 +11,7 @@
   "classifier_dropout": 0.1,
   "outer_lr": 0.001,
   "outer_weight_decay": 1.0,
+  "support_loss_weight": 0.1,
   "augment_random_crop": true,
   "random_crop_scope": "both",
   "query_crops": 64,

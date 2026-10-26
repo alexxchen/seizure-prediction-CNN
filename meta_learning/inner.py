@@ -249,8 +249,10 @@ def calibrate_batchnorm(reference, parameters, buffers, features):
 def fit_classifier(reference, features, labels, config, *, differentiable, progress=None):
     """Train exactly the configured full epochs; optionally replay exact gradients.
 
-    CNN weights and support BatchNorm statistics persist within a task. Support metrics
-    are diagnostic only; the final epoch supplies the classifier. With batchnorm_recalibration, evaluation
+    CNN weights and support BatchNorm statistics persist within a task. Intermediate
+    support metrics never select weights; the final epoch supplies the classifier.
+    The outer objective separately evaluates differentiable final-support loss.
+    With batchnorm_recalibration, evaluation
     uses exact support statistics of the final weights instead of the warm-up-biased running EMA. A zero checkpoint interval enables ordinary
     full unrolling for small reference checks; final per-mouse fitting needs no
     hypergradient or stored training trajectory.

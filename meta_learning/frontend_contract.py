@@ -70,7 +70,7 @@ def check_candidate(device="cpu"):
     from dataclasses import replace
     from pathlib import Path
     from meta_learning.config import Config
-    from meta_learning.inner import classifier_loss, fit_classifier
+    from meta_learning.algorithms import meta_objective
 
     devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
     with torch.random.fork_rng(devices=devices):
@@ -140,12 +140,9 @@ def check_candidate(device="cpu"):
         config = Config.load(Path(__file__).resolve().parent.parent / "configs/meta.json")
         diagnostic = replace(config, inner_epochs=1, batch_size=2, inner_checkpoint_steps=1)
         labels = torch.tensor([0, 1], device=device)
-        support_features = frontend(x)
-        fit = fit_classifier(model.cnn, support_features, labels, diagnostic, differentiable=True)
-        query_loss = classifier_loss(model.cnn, fit.parameters, fit.buffers,
-                                     frontend(x.flip(0)), labels.flip(0), diagnostic)
-        hypergradients = torch.autograd.grad(query_loss, tuple(frontend.parameters()), allow_unused=True)
-        if not torch.isfinite(query_loss) or not all(
+        objective = meta_objective(model, (x, labels), (x.flip(0), labels.flip(0)), diagnostic)
+        hypergradients = torch.autograd.grad(objective, tuple(frontend.parameters()), allow_unused=True)
+        if not torch.isfinite(objective) or not all(
                 gradient is None or torch.isfinite(gradient).all() for gradient in hypergradients):
             raise ValueError("CNN fit produced a non-finite frontend hypergradient")
         if not any(gradient is not None and gradient.abs().sum() > 0 for gradient in hypergradients):
@@ -156,7 +153,7 @@ def check_candidate(device="cpu"):
                     parameters=sum(p.numel() for p in frontend.parameters()),
                     cnn_parameters=sum(p.numel() for p in model.cnn.parameters()), device=str(device),
                     coverage="Synthetic shape, initialization RNG, chunk/sample isolation, state, silence, "
-                             "frontend gradients, CNN logits and checkpointed support/query hypergradients")
+                             "frontend gradients, CNN logits and checkpointed query plus final-support hypergradients")
 
 
 if __name__ == "__main__":
