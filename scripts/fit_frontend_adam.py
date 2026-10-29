@@ -43,14 +43,13 @@ def probabilities(cnn, features, batch_size):
 
 def fit_cnn(cnn, support, labels, validation, validation_labels, config, *, epochs, lr,
             resume=None, progress=None):
-    """Train all epochs; validation chooses calibrated copies without changing the solver.
+    """Train all epochs; validation chooses eval copies without changing the solver.
 
-    Adam moments and BatchNorm EMA persist across epochs. Each candidate receives
-    exact support-only BatchNorm calibration on a copy; the training EMA is untouched.
+    Adam moments and BatchNorm EMA persist across epochs. Each candidate uses
+    the training EMA directly, without a final support calibration pass.
     Resume restores Adam, training buffers, best candidate, history, and shuffle RNG.
     """
     from meta_learning.common import prediction_metrics
-    from meta_learning.inner import calibrate_batchnorm
 
     if epochs < 1 or not math.isfinite(lr) or lr <= 0:
         raise ValueError("Use a positive epoch budget and finite positive Adam learning rate")
@@ -61,7 +60,6 @@ def fit_cnn(cnn, support, labels, validation, validation_labels, config, *, epoc
     for layer in cnn.modules():
         if isinstance(layer, torch.nn.Dropout):
             layer.p = config.classifier_dropout
-    anchor = [parameter.detach().clone() for parameter in cnn.parameters()]
     optimizer = torch.optim.Adam(cnn.parameters(), lr=lr)
     history, best, start, state = [], None, 0, None
     if resume is not None:
@@ -86,14 +84,11 @@ def fit_cnn(cnn, support, labels, validation, validation_labels, config, *, epoc
             loss.backward()
             torch.nn.utils.clip_grad_norm_(cnn.parameters(), config.gradient_clip, error_if_nonfinite=True)
             if config.inner_weight_decay:
-                for parameter, origin in zip(cnn.parameters(), anchor):
-                    parameter.grad.add_(parameter.detach() - origin, alpha=config.inner_weight_decay)
+                for parameter in cnn.parameters():
+                    parameter.grad.add_(parameter.detach(), alpha=config.inner_weight_decay)
             optimizer.step()
         candidate = copy.deepcopy(cnn).eval()
         with torch.no_grad():
-            calibrated = calibrate_batchnorm(candidate, dict(candidate.named_parameters()),
-                                             dict(candidate.named_buffers()), support)
-            candidate.load_state_dict(dict(candidate.named_parameters(), **calibrated))
             support_probabilities = probabilities(candidate, support, config.batch_size)
             validation_probabilities = probabilities(candidate, validation, config.batch_size)
         support_metrics, _ = prediction_metrics(labels.cpu().numpy(), support_probabilities.cpu().numpy())

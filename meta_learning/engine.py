@@ -13,7 +13,7 @@ import torch
 from meta_learning.frontend import FRONTEND_CONFIG
 from meta_learning.frontend_contract import CNN_INPUT_SHAPE
 from meta_learning.waveform import WAVEFORM_CONFIG
-from meta_learning.adaptation import adapt_model, predict
+from meta_learning.adaptation import adapt_model, predict, validate_fresh_crops
 from meta_learning.algorithms import meta_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json, runtime_identity
 from meta_learning.config import Config
@@ -22,6 +22,7 @@ from meta_learning.model import MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
 import sample_pipeline
+from meta_learning.training_log import TrainingLog, progress_event, task_event, refit_event
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -59,7 +60,7 @@ def inner_shuffle_rng(seed, device):
 
 
 def fit_progress(stage, **context):
-    return lambda row: print(json.dumps(dict(stage=stage, **context, **row)), flush=True)
+    return lambda row: progress_event(stage, dict(context, **row))
 
 
 def validation_roles(config):
@@ -99,6 +100,13 @@ def validate(initial, store, config, device, step, identity):
         training = store.load_crops(mouse, "train") if crops_support(config) else store.load(mouse, "train")
         model, fit = adapt_model(initial, training, config, device, config.seed + 10000 + position,
                                         progress=fit_progress("per_mouse_fit", step=step, mouse=mouse))
+        if crops_query(config):
+            query_crops = store.load_crops(mouse, "validation", days=config.query_validation_days)
+            fit["query_crop_validation"] = validate_fresh_crops(
+                model, query_crops, config, np.random.default_rng(config.seed + 10000 + position),
+                device, role="query")
+            fit_progress("per_mouse_query_crop_validation", step=step, mouse=mouse)(
+                fit["query_crop_validation"])
         predictions[mouse], fingerprints = {}, {}
         for role, part, days in roles:
             values = store.load(mouse, part)
@@ -124,6 +132,8 @@ def validate(initial, store, config, device, step, identity):
         adapted[mouse] = dict(model=cpu_state(model), mouse=mouse,
                               training_fingerprint=training.fingerprint, **fingerprints,
                               identity=identity, step=step, config=config.to_dict(), classifier_fit=fit)
+        fit_progress('refit_complete')(refit_event(step, mouse,
+            {role: dict(subjects=values) for role, values in subjects.items()}))
     reports = {}
     for role, part, days in roles:
         aggregate = {key: float(np.mean([row[key] for row in subjects[role].values()]))
@@ -151,6 +161,14 @@ def selection_improves(score, previous):
 
 
 def train_run(config, store, run_dir, prepared_dir, device, resume=False):
+    with TrainingLog(run_dir, config, device) as logger:
+        selection = _train_run(config, store, run_dir, prepared_dir, device, resume)
+        logger.emit('training_complete', dict(completed_steps=config.outer_steps,
+            selected_step=selection['step'], role=selection['role'], loss=selection['aggregate']['loss']))
+        return selection
+
+
+def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
     config.validate()
     run_dir = Path(run_dir)
     metadata_path = run_dir / "run.json"
@@ -203,16 +221,18 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                          gradient_reduction="Sum of mouse gradients weighted by eligible query-event counts",
                                          query_events=query_events, outer_task_weights=task_weights),
                       normalization=FRONTEND_CONFIG["input_normalization"],
-                      batchnorm=("Support batch statistics during training; query/test use exact support statistics of the final "
-                                 "weights, recalibrated differentiably after each fit" if config.batchnorm_recalibration else
-                                 "Support batch statistics and per-task running EMA; query/test use frozen support EMA; full EMA hypergradient"),
+                      batchnorm="Support batch statistics and per-task running EMA; query/test use frozen support EMA; "
+                                "full EMA hypergradient; no final recalibration",
                       augmentation=(dict(crop_config=sample_pipeline.CROP_CONFIG,
                                          scope=config.random_crop_scope, query_crops=config.query_crops,
                                          support_crops=config.support_crops,
+                                         support_pool_crops=config.support_pool_crops,
                                          crop_count_unit="per_event_per_class",
+                                         support_refresh="New crop pool per inner/refit fit; epoch selections without replacement",
                                          policy="Meta support, query, or both per scope, and per-mouse support fitting: "
-                                                "fresh uniformly placed 112 s crops of each row's context segment every "
-                                                "outer step from the episode RNG; K crops per event and class; negatives "
+                                                "one pool of uniformly placed 112 s support crops per event/class and fit, with "
+                                                "K pool slots selected without replacement per event/class each epoch; "
+                                                "one query draw per outer task, from the episode RNG; K crops per event and class; negatives "
                                                 "sample uniformly over all legal starts in eligible safe intervals of the "
                                                 "same mouse and day, independently of fixed negative rows; optional per-class caps "
                                                 "limit generated examples; query loss averaged within and across represented events; per-mouse fitting uses the "
@@ -224,17 +244,25 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                       f"Fixed per task: seed {config.inner_shuffle_seed} + task index; "
                                       "identical window order and minibatch shuffles every outer step"),
                       inner_updates=(f"Task-local CNN plain SGD; exactly {config.inner_epochs} full epochs "
-                                     + (f"over {config.support_crops} random crops per event and class (meta inner fits "
+                                     + (f"over {config.support_crops} draws from {config.support_pool_crops} cached crops per event and class each epoch (meta inner fits "
                                         "from the episode RNG; per-mouse fits from a fixed per-mouse seed)"
                                         if crops_support(config) else "over fixed support windows")
-                                     + f"; L2 toward the unlearned reference weights, coefficient {config.inner_weight_decay}"
+                                     + f"; zero-centered L2 after loss-gradient clipping, coefficient {config.inner_weight_decay}"
                                      + " in both meta inner and per-mouse fits"),
                       outer_updates="Shared frontend only",
+                      final_support_reduction="Uniform mean over all support pool slots, including slots not selected by SGD; "
+                                              "final CNN weights and frozen support BN EMA",
                       classifier_seed=config.seed,
                       frontend_seed=config.seed,
                       adaptation="Fresh CNN; frozen frontend; same fixed epoch budget as inner training",
                       inner_stopping="Fixed epoch budget; no early stopping; final epoch classifier; intermediate support metrics are diagnostic only",
-                      meta_gradient="Full unrolled frontend hypergradient through every fixed-epoch update with RNG-preserving segment checkpointing")
+                      crop_validation="After each meta/refit CNN fit, one new support/query crop draw when "
+                                      "that role uses crops; same per-event/class counts and caps; frozen weights "
+                                      "and EMA; role-keyed independent crop RNG and preserved Torch RNG; "
+                                      "diagnostic only, never gradients or selection",
+                      meta_gradient="Full frontend hypergradient through every epoch/update and support BN EMA; "
+                                    "segment replay restores epoch indices and dropout RNG; cached pool adjoints "
+                                    "sum before one chunked frontend VJP; no gradient truncation")
     identity = digest(provenance)
     if resume:
         if not metadata_path.exists() or json.loads(metadata_path.read_text())["identity"] != identity:
@@ -305,6 +333,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
         return max(previous_peak, current)
     try:
         for step in range(start_step + 1, config.outer_steps + 1):
+            step_started = time.monotonic()
             write_json(run_dir / "status.json", dict(status="training", step=step - 1,
                        active_step=step, target_steps=config.outer_steps))
             optimizer.zero_grad(set_to_none=True)
@@ -322,7 +351,20 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 with inner_shuffle_rng(fixed_seed, device):
                     loss, fit = meta_objective(model, support, query, config, return_diagnostics=True,
                         progress=fit_progress("inner_fit", step=step, task=task_index, mouse=mouse),
-                        query_weights=query_weights)
+                        query_weights=query_weights,
+                        crop_validation=lambda fitted: {
+                            f"{role}_crop_validation": validate_fresh_crops(
+                                model, values, config, task_rng, device, role=role,
+                                parameters=fitted.parameters, buffers=fitted.buffers,
+                                reference=(dict(accuracy=fitted.report["last_support_accuracy"],
+                                                loss=fitted.report["last_support_loss"])
+                                           if role == "support" else fitted.report["query"]))
+                            for role, values, enabled in (("support", training[mouse], crops_support(config)),
+                                                          ("query", queries[mouse], crops_query(config))) if enabled})
+                for role in ("support", "query"):
+                    if f"{role}_crop_validation" in fit:
+                        fit_progress(f"{role}_crop_validation", step=step, task=task_index, mouse=mouse)(
+                            fit[f"{role}_crop_validation"])
                 fit.update(inner_shuffle_seed=fixed_seed)
                 fit.update(mouse=mouse, support_days=list(episode.support_days),
                            query_days=list(episode.query_days), query_samples=len(query[1]),
@@ -336,6 +378,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                     raise FloatingPointError("Non-finite outer loss")
                 (loss * task_weights[mouse]).backward()
                 losses.append(float(loss.detach()) * task_weights[mouse])
+                fit_progress('task_complete')(task_event(step, mouse, fit))
             grad_norm = torch.nn.utils.clip_grad_norm_(outer_parameters, config.gradient_clip, error_if_nonfinite=True)
             optimizer.step()
             row = dict(step=step, mice=list(config.targets), tasks=len(losses),
@@ -359,13 +402,34 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                 aggregate=aggregate, subjects=subjects)
             fit_progress("query_step", step=step)(row["query"])
             row["inner"] = dict(epochs_per_task=config.inner_epochs, support_crops=config.support_crops,
+                                support_pool_crops=config.support_pool_crops,
                                 optimizer_steps=sum(fit["optimizer_steps"] for fit in inner_reports),
                                 fixed_epoch_tasks=sum(fit["stop_reason"] == "fixed_epochs" for fit in inner_reports))
+            for role, enabled in (("support", crops_support(config)), ("query", crops_query(config))):
+                if not enabled:
+                    continue
+                diagnostic_subjects = {fit["mouse"]: fit[f"{role}_crop_validation"] for fit in inner_reports}
+                row[f"{role}_crop_validation"] = dict(timing="before_outer_update",
+                    aggregation="Equal mouse mean; diagnostic only",
+                    aggregate={key: float(np.mean([value[key] for value in diagnostic_subjects.values()]))
+                               for key in ("loss", "accuracy", "loss_gap", "accuracy_gap")},
+                    subjects=diagnostic_subjects)
             improved = False
             if step % config.eval_every == 0 or step == config.outer_steps:
+                fit_progress('evaluation_started')(dict(step=step))
                 report, predictions, adapted = validate(model, store, config, device, step, identity)
                 roles = report_roles(report)
                 row["query_refit"] = roles["query"]["aggregate"]
+                if crops_support(config):
+                    row["support_crop_validation_refit"] = {
+                        key: float(np.mean([value["classifier_fit"]["support_crop_validation"][key]
+                                            for value in roles["query"]["subjects"].values()]))
+                        for key in ("loss", "accuracy", "loss_gap", "accuracy_gap")}
+                if crops_query(config):
+                    row["query_crop_validation_refit"] = {
+                        key: float(np.mean([value["classifier_fit"]["query_crop_validation"][key]
+                                            for value in roles["query"]["subjects"].values()]))
+                        for key in ("loss", "accuracy")}
                 if "valid" in roles:
                     row["valid"] = roles["valid"]["aggregate"]
                 row["test"] = report["test"]["aggregate"]
@@ -376,6 +440,7 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 fit_progress("evaluation_step", step=step)(
                     {role: value["aggregate"] for role, value in roles.items()})
                 if improved:
+                    fit_progress('checkpoint_selected')(dict(step=step, role=report['role'], loss=score['loss']))
                     directory = run_dir / "selected" / f"step-{step:06d}"
                     models = {}
                     for mouse, state in adapted.items():
@@ -399,8 +464,8 @@ def train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 write_json(run_dir / "selection.json", selection)
             write_json(run_dir / "history.json", history)
             write_json(run_dir / "status.json", dict(status="training", step=step, target_steps=config.outer_steps))
-            if step == 1 or step % 10 == 0 or "query_refit" in row:
-                print(json.dumps(row), flush=True)
+            fit_progress('outer_step')(dict(row, step_seconds=time.monotonic() - step_started,
+                elapsed_seconds=elapsed_seconds + time.monotonic() - started, peak_vram_mb=peak_memory()))
         write_json(run_dir / "status.json", dict(status="complete", step=config.outer_steps,
                    training_wall_seconds=elapsed_seconds + time.monotonic() - started,
                    peak_vram_mb=peak_memory(), selection=selection))

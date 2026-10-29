@@ -1,6 +1,7 @@
 """Fixed per-mouse tasks: training support and outer-training query; test is inference only."""
 
 from dataclasses import dataclass
+import copy
 
 import numpy as np
 import torch
@@ -90,6 +91,62 @@ def support_inputs(split, indices, config, rng, device):
     return split.batch(indices, device)
 
 
+class SupportPool:
+    """One legal crop pool per fit, with event/class-balanced epoch selections."""
+
+    def __init__(self, split, indices, config, rng):
+        if split.split != "train" or not split.table.day.between(0, 7).all():
+            raise ValueError("Support crop pools require training Days 0-7")
+        self.split, self.config, self.rng = split, config, rng
+        self.indices = event_crop_indices(split, indices, config.support_pool_crops)
+        self.labels = split.labels[self.indices]
+        self.groups = len(self.indices) // config.support_pool_crops
+        self.state = None
+        self.selections = []
+        self.usage = np.zeros(len(self.indices), dtype=np.int64)
+
+    def __len__(self):
+        counts = np.bincount(self.labels, minlength=2) // self.config.support_pool_crops * self.config.support_crops
+        return int(sum(counts if self.config.support_per_class is None else
+                       np.minimum(counts, self.config.support_per_class)))
+
+    def waveforms(self, *, replay=False):
+        """Stream frontend chunks; crop RNG calls depend only on CNN batch size."""
+        if replay:
+            if self.state is None:
+                raise ValueError("Cannot replay an unmaterialized support pool")
+            rng = np.random.default_rng()
+            rng.bit_generator.state = copy.deepcopy(self.state)
+        else:
+            if self.state is not None:
+                raise ValueError("A support pool is materialized exactly once per fit")
+            self.state = copy.deepcopy(self.rng.bit_generator.state)
+            rng = self.rng
+        pending = None
+        for start in range(0, len(self.indices), self.config.batch_size):
+            indices = self.indices[start:start + self.config.batch_size]
+            inputs, _ = support_inputs(self.split, indices, self.config, rng, torch.device("cpu"))
+            pending = inputs if pending is None else torch.cat((pending, inputs))
+            while len(pending) >= self.config.frontend_batch_size:
+                yield pending[:self.config.frontend_batch_size]
+                pending = pending[self.config.frontend_batch_size:]
+        if pending is not None and len(pending):
+            yield pending
+
+    def draw(self, epoch):
+        if epoch == len(self.selections):
+            if self.state is None:
+                raise ValueError("Materialize the support pool before drawing epochs")
+            size = self.config.support_pool_crops
+            selected = np.concatenate([group * size + self.rng.choice(
+                size, self.config.support_crops, replace=False) for group in range(self.groups)])
+            if self.config.support_per_class is not None:
+                selected = balanced_indices(self.labels, selected, self.config.support_per_class, self.rng)
+            self.selections.append(selected)
+            np.add.at(self.usage, selected, 1)
+        return self.selections[epoch]
+
+
 def event_sample_weights(split, indices, device):
     """Each represented event has unit total weight, including its matched negatives."""
     rows = split.table.iloc[indices]
@@ -118,16 +175,19 @@ def query_task_weights(queries, episodes):
 
 
 def episode_batch(support_split, query_split, episode, config, rng, device):
-    support = support_indices(support_split, episode.support_indices, config)
-    support = balanced_indices(support_split.labels, support, config.support_per_class, rng)
+    support = episode.support_indices
+    if not crops_support(config):
+        support = balanced_indices(support_split.labels, support, config.support_per_class, rng)
     crop_query = crops_query(config)
     query = (event_crop_indices(query_split, episode.query_indices, config.query_crops)
              if crop_query else episode.query_indices)
     query = balanced_indices(query_split.labels, query, config.query_per_class, rng)
-    # Crop positions come from the episode RNG, so checkpoints resume them exactly and a
-    # fixed inner_shuffle_seed also fixes them.
-    # Cropped sides contribute K examples per event and class before optional sample caps.
-    support_batch = support_inputs(support_split, support, config, rng, device)
+    # Query is drawn once; the support pool is streamed when fitting starts.
+    # Pool positions and epoch selections share the checkpointed task RNG.
+    if crops_support(config):
+        support_batch = SupportPool(support_split, support, config, rng)
+    else:
+        support_batch = support_inputs(support_split, support, config, rng, device)
     query_batch = (query_split.random_crop_batch(query, rng, device) if crop_query else
                    query_split.batch(query, device))
     return support_batch, query_batch, event_sample_weights(query_split, query, device)

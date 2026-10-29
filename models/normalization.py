@@ -5,9 +5,9 @@ from torch import nn
 
 
 class AxisBatchNorm(nn.Module):
-    """Match Keras BatchNormalization, including its biased running variance."""
+    """Use PyTorch BatchNorm defaults with differentiable support-only state."""
 
-    def __init__(self, features, axis, epsilon=1e-3, momentum=0.99):
+    def __init__(self, features, axis, epsilon=1e-5, momentum=0.1):
         super().__init__()
         self.axis = axis
         self.epsilon = epsilon
@@ -25,14 +25,18 @@ class AxisBatchNorm(nn.Module):
         shape[self.axis] = -1
         if self.training:
             axes = tuple(index for index in range(inputs.ndim) if index != self.axis)
+            samples = inputs.numel() // inputs.shape[self.axis]
+            if samples <= 1:
+                raise ValueError("Expected more than 1 value per channel when training")
             variance, mean = torch.var_mean(inputs, dim=axes, unbiased=False)
+            running_variance = variance * (samples / (samples - 1))
             if self.differentiable_stats:
-                self.running_mean = torch.lerp(self.running_mean, mean, 1.0 - self.momentum)
-                self.running_var = torch.lerp(self.running_var, variance, 1.0 - self.momentum)
+                self.running_mean = torch.lerp(self.running_mean, mean, self.momentum)
+                self.running_var = torch.lerp(self.running_var, running_variance, self.momentum)
             else:
                 with torch.no_grad():
-                    self.running_mean.lerp_(mean.detach(), 1.0 - self.momentum)
-                    self.running_var.lerp_(variance.detach(), 1.0 - self.momentum)
+                    self.running_mean.lerp_(mean.detach(), self.momentum)
+                    self.running_var.lerp_(running_variance.detach(), self.momentum)
         else:
             mean, variance = self.running_mean, self.running_var
         normalized = (inputs - mean.reshape(shape)) * torch.rsqrt(variance.reshape(shape) + self.epsilon)

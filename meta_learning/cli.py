@@ -9,6 +9,7 @@ from meta_learning.config import Config
 from meta_learning.data import DataStore, FeatureSplit
 from meta_learning.engine import evaluate_run, train_run
 from meta_learning.episodes import split_episode, query_task_weights
+from meta_learning.training_log import progress_event
 from prepare import parse_targets, source_settings
 import sample_pipeline
 
@@ -67,8 +68,7 @@ def train_main():
     from meta_learning.plotting import save_convergence_plots
 
     paths = save_convergence_plots(args.run_dir)
-    print(json.dumps(dict(stage="convergence_plots", paths=[str(path) for path in paths])), flush=True)
-    print(json.dumps(result), flush=True)
+    progress_event('convergence_plots', dict(paths=[str(path) for path in paths]), run_dir=args.run_dir)
 
 
 def evaluate_main():

@@ -17,7 +17,6 @@ class Config:
     inner_checkpoint_steps: int = 5
     inner_log_every: int = 0
     inner_shuffle_seed: int | None = None
-    batchnorm_recalibration: bool = True
     inner_lr: float = 0.01
     inner_weight_decay: float = 0.0
     classifier_dropout: float = 0.0
@@ -27,7 +26,8 @@ class Config:
     augment_random_crop: bool = True
     random_crop_scope: str = "both"
     query_crops: int = 64
-    support_crops: int = 40
+    support_crops: int = 4
+    support_pool_crops: int = 32
     query_validation_days: tuple = (8,)
     selection_validation_days: tuple | None = (11,)
     support_per_class: int | None = None
@@ -82,8 +82,11 @@ class Config:
             raise ValueError("support_crops must be a positive integer")
         if self.support_crops > 1 and not (self.augment_random_crop and self.random_crop_scope in {"both", "support"}):
             raise ValueError("support_crops > 1 requires random crops on the support")
-        if type(self.batchnorm_recalibration) is not bool:
-            raise ValueError("batchnorm_recalibration must be true or false")
+        if type(self.support_pool_crops) is not int or self.support_pool_crops < 1:
+            raise ValueError("support_pool_crops must be a positive integer")
+        if (self.augment_random_crop and self.random_crop_scope in {"both", "support"}
+                and self.support_pool_crops < self.support_crops):
+            raise ValueError("support_pool_crops must be at least support_crops")
         if self.inner_shuffle_seed is not None and (
                 type(self.inner_shuffle_seed) is not int or self.inner_shuffle_seed < 0):
             raise ValueError("inner_shuffle_seed must be null (fresh shuffles) or a nonnegative integer")

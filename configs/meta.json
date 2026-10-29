@@ -1,14 +1,14 @@
 {
   "targets": ["X1","X2","X9","X14"],
   "seed": 0,
-  "outer_steps": 50,
+  "outer_steps": 200,
   "inner_epochs": 40,
   "inner_checkpoint_steps": 20,
   "inner_log_every": 0,
   "inner_shuffle_seed": null,
   "inner_lr": 0.01,
   "inner_weight_decay": 0.0,
-  "classifier_dropout": 0.1,
+  "classifier_dropout": 0.0,
   "outer_lr": 0.001,
   "outer_weight_decay": 0.0,
   "support_loss_weight": 1.0,
@@ -16,6 +16,7 @@
   "random_crop_scope": "both",
   "query_crops": 64,
   "support_crops": 4,
+  "support_pool_crops": 32,
   "query_validation_days": [8, 11],
   "selection_validation_days": null,
   "support_per_class": null,
@@ -24,6 +25,6 @@
   "checkpoint_every": 25,
   "batch_size": 64,
   "frontend_batch_size": 64,
-  "label_smoothing": 0.1,
+  "label_smoothing": 0.0,
   "gradient_clip": 5.0
 }

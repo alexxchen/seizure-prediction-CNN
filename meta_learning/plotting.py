@@ -34,7 +34,7 @@ def accuracy_history(run_dir, history, selection):
         subjects = report.get("subjects", {})
         for metrics in subjects.values():
             fit = metrics.get("classifier_fit", {})
-            value = fit["calibrated_support_accuracy"] if "calibrated_support_accuracy" in fit else fit["last_support_accuracy"]
+            value = fit["last_support_accuracy"]
             if not isinstance(value, (int, float)) or not math.isfinite(value):
                 break
             accuracies.append(value)
@@ -58,7 +58,7 @@ def split_label(name, days):
 
 
 def convergence_figure(history, selection, title, split_days=None):
-    """Compare four split accuracies at matched post-update refit checkpoints."""
+    """Compare fit, fresh-support, and evaluation accuracies for the same refitted CNNs."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
     from matplotlib.ticker import MaxNLocator, PercentFormatter
@@ -69,7 +69,9 @@ def convergence_figure(history, selection, title, split_days=None):
     split_days = split_days or {}
     for key, name, color, marker in [
         ("support_refit", "Support", "#7b4eaa", "s"),
+        ("support_crop_validation_refit", "Fresh support crops", "#ba4c78", "v"),
         ("query_refit", "Query", "#3564a5", "o"),
+        ("query_crop_validation_refit", "Fresh query crops", "#579eb0", "P"),
         ("valid", "Valid", "#d18117", "^"),
         ("test", "Test", "#338663", "D"),
     ]:
