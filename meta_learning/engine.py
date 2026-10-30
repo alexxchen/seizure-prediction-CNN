@@ -17,7 +17,7 @@ from meta_learning.adaptation import adapt_model, predict, validate_fresh_crops
 from meta_learning.algorithms import meta_objective
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json, runtime_identity
 from meta_learning.config import Config
-from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch, query_task_weights
+from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch, query_task_weights, episode_from_events
 from meta_learning.model import MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
@@ -64,18 +64,13 @@ def fit_progress(stage, **context):
 
 
 def validation_roles(config):
-    """Query days supply outer gradients; disjoint selection days (if any) pick checkpoints."""
-    roles = [("query", "validation", config.query_validation_days)]
-    if config.selection_validation_days is not None:
-        roles.append(("valid", "validation", config.selection_validation_days))
-    return roles + [("test", "test", None)]
+    """Validation reuses query events; test remains Days 12/13 inference."""
+    return [("query", "development", config.task_days), ("test", "test", None)]
 
 
 def selection_criterion(config):
-    if config.selection_validation_days is None:
-        return "Minimum mean query log loss; test metrics do not select checkpoints within this run"
-    return (f"Minimum mean log loss on valid Days {list(config.selection_validation_days)}, disjoint from "
-            f"query Days {list(config.query_validation_days)}; test metrics do not select checkpoints within this run")
+    return ("Minimum mean query-event fixed-window log loss after matched support-only refitting; "
+            "support/query events are redrawn each outer step; test never selects checkpoints")
 
 
 def report_roles(report):
@@ -86,37 +81,34 @@ def report_roles(report):
     return roles
 
 
-def validate(initial, store, config, device, step, identity):
-    """Fit on support only; score query, valid, and held-out test with the same classifier.
-
-    The root aggregate/subjects select checkpoints: selection days when configured,
-    otherwise the query days. The nested test report is test-only inference.
-    """
+def validate(initial, store, config, device, step, identity, episodes):
+    """Refit on this step's support events; query selects, test only scores."""
     roles = validation_roles(config)
     subjects = {role: {} for role, _, _ in roles}
     predictions, adapted = {}, {}
     for position, mouse in enumerate(config.targets):
-        # Per-mouse fits share the meta inner fits' support policy, including support crops.
-        training = store.load_crops(mouse, "train") if crops_support(config) else store.load(mouse, "train")
+        episode = episodes[mouse]
+        fixed_pool = store.load_task_pool(mouse).subset_days(config.task_days)
+        fit_pool = (store.load_task_pool(mouse, crops=True).subset_days(config.task_days)
+                    if crops_support(config) else fixed_pool)
+        training = fit_pool.subset_indices(episode.support_indices)
+        query = fixed_pool.subset_indices(episode.query_indices)
         model, fit = adapt_model(initial, training, config, device, config.seed + 10000 + position,
-                                        progress=fit_progress("per_mouse_fit", step=step, mouse=mouse))
+                                progress=fit_progress("per_mouse_fit", step=step, mouse=mouse))
+        fit["episode"] = episode.describe()
         if crops_query(config):
-            query_crops = store.load_crops(mouse, "validation", days=config.query_validation_days)
+            query_crops = store.load_task_pool(mouse, crops=True).subset_days(config.task_days).subset_indices(
+                episode.query_indices)
             fit["query_crop_validation"] = validate_fresh_crops(
                 model, query_crops, config, np.random.default_rng(config.seed + 10000 + position),
                 device, role="query")
-            fit_progress("per_mouse_query_crop_validation", step=step, mouse=mouse)(
-                fit["query_crop_validation"])
-        predictions[mouse], fingerprints = {}, {}
-        for role, part, days in roles:
-            values = store.load(mouse, part)
-            if (values.split != part or values.mouse != mouse or
-                    not values.table.day.isin(DAY_SPLITS[part]).all()):
-                raise ValueError(f"Invalid {part} partition for {mouse}")
-            # Full-split fingerprints let the separate evaluation command replay checkpoints.
-            fingerprints[f"{part}_fingerprint"] = values.fingerprint
-            if days is not None:
-                values = values.subset_days(days)
+            fit_progress("per_mouse_query_crop_validation", step=step, mouse=mouse)(fit["query_crop_validation"])
+        predictions[mouse], fingerprints = {}, {"development_fingerprint": fixed_pool.fingerprint}
+        for role, _, _ in roles:
+            values = query if role == "query" else store.load(mouse, "test")
+            if role == "test" and (values.split != "test" or values.mouse != mouse or
+                                     not values.table.day.isin(DAY_SPLITS["test"]).all()):
+                raise ValueError(f"Invalid test partition for {mouse}")
             metrics, probabilities = prediction_metrics(values.labels, predict(
                 model, values, config.batch_size, device))
             metrics.update(evaluation_protocol_sha256=values.fingerprint, classifier_fit=fit,
@@ -129,19 +121,18 @@ def validate(initial, store, config, device, step, identity):
             fit_progress(f"per_mouse_fit_{role}", step=step, mouse=mouse,
                          split=role, days=metrics["days"])(
                 {key: metrics[key] for key in ["samples", "loss", "accuracy", "auc", "sensitivity", "specificity"]})
-        adapted[mouse] = dict(model=cpu_state(model), mouse=mouse,
+        adapted[mouse] = dict(model=cpu_state(model), mouse=mouse, episode=episode.describe(),
                               training_fingerprint=training.fingerprint, **fingerprints,
                               identity=identity, step=step, config=config.to_dict(), classifier_fit=fit)
         fit_progress('refit_complete')(refit_event(step, mouse,
             {role: dict(subjects=values) for role, values in subjects.items()}))
     reports = {}
-    for role, part, days in roles:
+    for role, part, _ in roles:
         aggregate = {key: float(np.mean([row[key] for row in subjects[role].values()]))
                      for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]}
-        reports[role] = dict(step=step, split=role, role=role, source_split=part, days=list(days or DAY_SPLITS[part]),
-                             aggregate=aggregate, subjects=subjects[role])
-    if "valid" in reports:
-        return dict(reports["valid"], query=reports["query"], test=reports["test"]), predictions, adapted
+        reports[role] = dict(step=step, split=role, role=role, source_split=part,
+                            days=sorted({day for row in subjects[role].values() for day in row["days"]}),
+                            aggregate=aggregate, subjects=subjects[role])
     return dict(reports["query"], test=reports["test"]), predictions, adapted
 
 
@@ -179,24 +170,22 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
         if (previous["config"] != config.to_dict() or previous["source_sha256"] != source_hashes() or
                 previous["runtime"] != runtime_identity(device)):
             raise ValueError("Resume requires identical config, sources, and runtime")
-    training = {mouse: (store.load_crops(mouse, "train") if crops_support(config) else
-                        store.load(mouse, "train")) for mouse in config.targets}
-    # Query days and the final-support auxiliary loss supply outer gradients; selection stays held out.
-    queries = {mouse: (store.load_crops(mouse, "validation", days=config.query_validation_days)
-                      if crops_query(config) else
-                      store.load(mouse, "validation").subset_days(config.query_validation_days))
+    training = {mouse: store.load_task_pool(mouse, crops=crops_support(config)).subset_days(config.task_days)
+                for mouse in config.targets}
+    queries = {mouse: store.load_task_pool(mouse, crops=crops_query(config)).subset_days(config.task_days)
                for mouse in config.targets}
-    episodes = {mouse: split_episode(training[mouse], queries[mouse]) for mouse in config.targets}
+    # The preview uses a private RNG; real membership draws use the checkpointed episode RNG.
+    preview_rng = np.random.default_rng(config.seed)
+    episodes = {mouse: split_episode(training[mouse], config, preview_rng) for mouse in config.targets}
     query_events, task_weights = query_task_weights(queries, episodes)
     model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size)
     provenance = dict(config=config.to_dict(), source_sha256=source_hashes(),
                       source_inventory_sha256=digest(verify_prepared(prepared_dir)["signature"]),
                       training_fingerprints={mouse: split.fingerprint for mouse, split in training.items()},
                       query_fingerprints={mouse: split.fingerprint for mouse, split in queries.items()},
-                      split_roles=dict(support="train Days 0-7",
-                                       query=f"outer-training query Days {list(config.query_validation_days)}",
-                                       valid=(None if config.selection_validation_days is None else
-                                                  f"checkpoint-selection valid Days {list(config.selection_validation_days)}"),
+                      split_roles=dict(support="Random complete support events from task_days",
+                                       query="Complementary random query events; outer gradients and checkpoint selection",
+                                       valid="Same as query; no independent validation partition",
                                        test="development-test Days 12/13; inference within run, candidate ranking in autoresearch"),
                       selection_criterion=selection_criterion(config),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
@@ -217,7 +206,8 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       task_schedule=dict(mice="Every configured mouse exactly once per outer step",
                                          mouse_order=list(config.targets),
                                          tasks_per_step=len(config.targets),
-                                         episodes="One fixed support/query task per mouse",
+                                         episodes="One random event partition per mouse per outer step",
+                                         task_days=list(config.task_days), query_event_fraction=config.query_event_fraction,
                                          gradient_reduction="Sum of mouse gradients weighted by eligible query-event counts",
                                          query_events=query_events, outer_task_weights=task_weights),
                       normalization=FRONTEND_CONFIG["input_normalization"],
@@ -336,6 +326,10 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             step_started = time.monotonic()
             write_json(run_dir / "status.json", dict(status="training", step=step - 1,
                        active_step=step, target_steps=config.outer_steps))
+            episodes = {mouse: split_episode(training[mouse], config, rng) for mouse in config.targets}
+            query_events, task_weights = query_task_weights(queries, episodes)
+            write_json(run_dir / "tasks" / f"step-{step:06d}.json",
+                       {mouse: task.describe() for mouse, task in episodes.items()})
             optimizer.zero_grad(set_to_none=True)
             losses, inner_reports = [], []
             for task_index, mouse in enumerate(config.targets):
@@ -359,17 +353,18 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                 reference=(dict(accuracy=fitted.report["last_support_accuracy"],
                                                 loss=fitted.report["last_support_loss"])
                                            if role == "support" else fitted.report["query"]))
-                            for role, values, enabled in (("support", training[mouse], crops_support(config)),
-                                                          ("query", queries[mouse], crops_query(config))) if enabled})
+                            for role, values, enabled in (("support", training[mouse].subset_indices(episode.support_indices), crops_support(config)),
+                                                          ("query", queries[mouse].subset_indices(episode.query_indices), crops_query(config))) if enabled})
                 for role in ("support", "query"):
                     if f"{role}_crop_validation" in fit:
                         fit_progress(f"{role}_crop_validation", step=step, task=task_index, mouse=mouse)(
                             fit[f"{role}_crop_validation"])
-                fit.update(inner_shuffle_seed=fixed_seed)
+                fit.update(inner_shuffle_seed=fixed_seed, episode=episode.describe())
                 fit.update(mouse=mouse, support_days=list(episode.support_days),
                            query_days=list(episode.query_days), query_samples=len(query[1]),
                            query_events=query_events[mouse], outer_weight=task_weights[mouse])
-                fit["query"].update(events=query_events[mouse], outer_weight=task_weights[mouse])
+                fit["query"].update(events=query_events[mouse], outer_weight=task_weights[mouse],
+                                    days=list(episode.query_days))
                 write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
                 inner_reports.append(fit)
                 fit_progress("query_task", step=step, task=task_index, mouse=mouse,
@@ -383,6 +378,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             optimizer.step()
             row = dict(step=step, mice=list(config.targets), tasks=len(losses),
                        query_events=query_events, outer_task_weights=task_weights,
+                       episodes={mouse: task.describe() for mouse, task in episodes.items()},
                        outer_loss=float(sum(losses)), gradient_norm=float(grad_norm))
             objective_subjects = {fit["mouse"]: fit["outer_objective"] for fit in inner_reports}
             row["outer_objective"] = dict(
@@ -397,7 +393,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             aggregate = {key: float(sum(task_weights[mouse] * metrics[key]
                                        for mouse, metrics in subjects.items()))
                          for key in ["loss", "accuracy"]}
-            row["query"] = dict(split="query", role="query", days=list(config.query_validation_days), timing="before_outer_update",
+            row["query"] = dict(split="query", role="query", days=sorted({day for task in episodes.values() for day in task.query_days}), timing="before_outer_update",
                                 aggregation="Eligible query-event weighted across mice",
                                 aggregate=aggregate, subjects=subjects)
             fit_progress("query_step", step=step)(row["query"])
@@ -417,7 +413,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             improved = False
             if step % config.eval_every == 0 or step == config.outer_steps:
                 fit_progress('evaluation_started')(dict(step=step))
-                report, predictions, adapted = validate(model, store, config, device, step, identity)
+                report, predictions, adapted = validate(model, store, config, device, step, identity, episodes)
                 roles = report_roles(report)
                 row["query_refit"] = roles["query"]["aggregate"]
                 if crops_support(config):
@@ -491,8 +487,8 @@ def evaluate_run(store, run_dir, device, split="test"):
     seed_everything(config.seed)
     role = next((entry for entry in validation_roles(config) if entry[0] == split), None)
     if role is None:
-        raise ValueError("No independent valid days configured; checkpoint selection uses query")
-    _, source_split, days = role
+        raise ValueError("Validation reuses query events; replay the query role")
+    _, source_split, _ = role
     subjects = {}
     for mouse in config.targets:
         record = selection["adapted_models"][mouse]
@@ -504,10 +500,17 @@ def evaluate_run(store, run_dir, device, split="test"):
             raise ValueError("Selected checkpoint identity mismatch")
         model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size).to(device)
         model.load_state_dict(state["model"])
-        values = store.load(mouse, source_split)
-        if values.fingerprint != state[f"{source_split}_fingerprint"]:
-            raise ValueError(f"{split} sample provenance changed")
-        scored = values.subset_days(days) if days is not None else values
+        if split == "query":
+            values = store.load_task_pool(mouse).subset_days(config.task_days)
+            if values.fingerprint != state["development_fingerprint"]:
+                raise ValueError("Development sample provenance changed")
+            episode = episode_from_events(values, state["episode"]["support_event_ids"],
+                                           state["episode"]["query_event_ids"])
+            scored = values.subset_indices(episode.query_indices)
+        else:
+            scored = store.load(mouse, "test")
+            if scored.split != "test" or not scored.table.day.isin(DAY_SPLITS["test"]).all():
+                raise ValueError("Replay test samples crossed Days 12/13")
         if scored.fingerprint != state[f"{split}_fingerprint"]:
             raise ValueError(f"{split} sample provenance changed")
         metrics, probabilities = prediction_metrics(scored.labels, predict(
@@ -522,7 +525,7 @@ def evaluate_run(store, run_dir, device, split="test"):
         table["probability"], table["predicted"] = probabilities, (probabilities >= 0.5).astype(int)
         table.to_csv(destination / "predictions.csv", index=False)
         write_json(destination / "metrics.json", metrics)
-    report = dict(split=split, role=split, source_split=source_split, days=list(days or DAY_SPLITS[source_split]),
+    report = dict(split=split, role=split, source_split=source_split, days=sorted({day for row in subjects.values() for day in row["days"]}),
                   selected_step=selection["step"], identity=metadata["identity"],
                   aggregate={key: float(np.mean([row[key] for row in subjects.values()]))
                              for key in ["accuracy", "auc", "sensitivity", "specificity", "loss"]},

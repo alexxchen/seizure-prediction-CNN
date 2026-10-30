@@ -5,7 +5,7 @@ import copy
 import numpy as np
 import torch
 
-from meta_learning.episodes import SupportPool, balanced_indices, crops_support, event_crop_indices, support_indices, support_inputs
+from meta_learning.episodes import SupportPool, balanced_indices, crops_support, event_crop_indices, event_groups, support_indices, support_inputs
 from meta_learning.common import digest
 from meta_learning.inner import FeatureEpochs, classifier_loss, fit_classifier, fitted_support_loss
 
@@ -35,10 +35,9 @@ def validate_fresh_crops(model, split, config, rng, device, *, role, parameters=
     """Score one new support/query draw with frozen weights, EMA, and caller RNGs."""
     if role not in {"support", "query"}:
         raise ValueError("Fresh crop validation accepts only support or query")
-    days = range(8) if role == "support" else config.query_validation_days
-    expected_split = "train" if role == "support" else "validation"
-    if split.split != expected_split or split.table.empty or not split.table.day.isin(days).all():
-        raise ValueError(f"Fresh {role} crops require that role's recording days")
+    event_groups(split)
+    if not split.table.day.isin(config.task_days).all():
+        raise ValueError(f"Fresh {role} crops require that role's non-test events")
     count = config.support_crops if role == "support" else config.query_crops
     cap = config.support_per_class if role == "support" else config.query_per_class
     # Role separation gives independent diagnostic streams without consuming any fit/query draws.
@@ -80,8 +79,9 @@ def validate_fresh_crops(model, split, config, rng, device, *, role, parameters=
 
 
 def adapt_model(initial, training, config, device, seed, *, progress=None):
-    if training.split != "train" or not training.table.day.between(0, 7).all():
-        raise ValueError("Adaptation may only use Days 0-7")
+    event_groups(training)
+    if not training.table.day.isin(config.task_days).all():
+        raise ValueError("Adaptation may only use the task's non-test support events")
     model = copy.deepcopy(initial).to(device)
     # Only the frontend is shared between mice; every fit starts from a fresh CNN.
     model.reset_classifier(config.seed)

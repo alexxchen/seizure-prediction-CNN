@@ -62,6 +62,8 @@ def readable_lines(stage, row, total=None):
         return [
             f"Meta training | {config['outer_steps']} outer steps x {config['inner_epochs']} inner epochs | {row['device']}",
             f"Mice: {', '.join(config['targets'])} | support pool/draw: {config['support_pool_crops']}/{config['support_crops']} per event/class | query crops: {config['query_crops']}",
+            (f"Tasks: random whole events from Days {config['task_days']} each outer step | query fraction {config['query_event_fraction']:g} | validation=query"
+             if 'task_days' in config else 'Tasks: see the saved run provenance.'),
             f"SGD lr={config['inner_lr']:g}, decay={config['inner_weight_decay']:g} | AdamW lr={config['outer_lr']:g}, decay={config['outer_weight_decay']:g} | dropout={config['classifier_dropout']:g} | support weight={config['support_loss_weight']:g}",
             'Values are accuracy / loss. S=support, Q=query, -> new=independent crop draw.',
             'Task rows: final fitted CNN. MEAN: equal mouse mean. Objective: query-event-weighted outer loss.',

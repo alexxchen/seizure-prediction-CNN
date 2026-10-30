@@ -7,6 +7,8 @@ from pathlib import Path
 
 from source_data import DAY_SPLITS, TARGETS
 
+TASK_DAYS = tuple(DAY_SPLITS["train"] + DAY_SPLITS["validation"])
+
 
 @dataclass(frozen=True)
 class Config:
@@ -28,8 +30,8 @@ class Config:
     query_crops: int = 64
     support_crops: int = 4
     support_pool_crops: int = 32
-    query_validation_days: tuple = (8,)
-    selection_validation_days: tuple | None = (11,)
+    task_days: tuple = TASK_DAYS
+    query_event_fraction: float = 0.2
     support_per_class: int | None = None
     query_per_class: int | None = None
     eval_every: int = 10
@@ -53,17 +55,13 @@ class Config:
             raise ValueError("inner_checkpoint_steps must be a nonnegative integer")
         if type(self.inner_log_every) is not int or self.inner_log_every < 0:
             raise ValueError("inner_log_every must be a nonnegative integer (0 measures/logs only the final epoch)")
-        validation_days = set(DAY_SPLITS["validation"])
-        query_days = self.query_validation_days
-        if (type(query_days) is not tuple or not query_days or len(set(query_days)) != len(query_days) or
-                any(type(day) is not int or day not in validation_days for day in query_days)):
-            raise ValueError("query_validation_days must be distinct validation days")
-        selection_days = self.selection_validation_days
-        if selection_days is not None and (
-                type(selection_days) is not tuple or not selection_days or
-                len(set(selection_days)) != len(selection_days) or set(selection_days) & set(query_days) or
-                any(type(day) is not int or day not in validation_days for day in selection_days)):
-            raise ValueError("selection_validation_days must be null or distinct validation days disjoint from the query days")
+        if (type(self.task_days) is not tuple or not self.task_days or
+                len(set(self.task_days)) != len(self.task_days) or
+                any(type(day) is not int or day not in TASK_DAYS for day in self.task_days)):
+            raise ValueError("task_days must be distinct non-test Days 0-8/11")
+        if (type(self.query_event_fraction) not in {float, int} or
+                not math.isfinite(self.query_event_fraction) or not 0 < self.query_event_fraction < 1):
+            raise ValueError("query_event_fraction must be finite and strictly between zero and one")
         if (type(self.outer_weight_decay) not in {float, int} or not math.isfinite(self.outer_weight_decay)
                 or self.outer_weight_decay < 0):
             raise ValueError("outer_weight_decay must be finite and nonnegative")
@@ -108,9 +106,7 @@ class Config:
         return self
 
     def to_dict(self):
-        days = self.selection_validation_days
-        return dict(asdict(self), targets=list(self.targets), query_validation_days=list(self.query_validation_days),
-                    selection_validation_days=None if days is None else list(days))
+        return dict(asdict(self), targets=list(self.targets), task_days=list(self.task_days))
 
     @classmethod
     def from_dict(cls, value):
@@ -118,7 +114,7 @@ class Config:
         unknown = set(value) - {field.name for field in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown configuration fields: {sorted(unknown)}")
-        for key in ["targets", "query_validation_days", "selection_validation_days"]:
+        for key in ["targets", "task_days"]:
             if value.get(key) is not None:
                 value[key] = tuple(value[key])
         return cls(**value).validate()

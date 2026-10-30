@@ -29,9 +29,9 @@ Each experiment runs on a single GPU. The training script completes the **declar
 **What you CANNOT do:**
 - Modify fixed files or locked configuration fields. Data loading, crop policy, solvers, normalization, and evaluation remain fixed. Do not refresh `protocol.lock.json` to admit a candidate; infrastructure changes require a separately reviewed protocol and fresh baseline.
 - Install new packages or add dependencies. You can only use what's already in `requirements.txt`.
-- Modify the evaluation harness or data roles. Support Days 0-7 alone fit each fresh CNN and its BatchNorm statistics; query Days 8/11 supply outer frontend gradients. Preserve full hypergradients and query/valid checkpoint selection. Test Days 12/13 never supply gradients, CNN fitting, statistics, or within-run checkpoint selection.
+- Modify the evaluation harness or data roles. Each step randomly partitions complete events from Days 0-8/11 into support/query (80/20). Only support fits each fresh CNN and its BatchNorm statistics; query supplies outer frontend gradients and checkpoint selection. Preserve full hypergradients. Test Days 12/13 never supply gradients, CNN fitting, statistics, or within-run checkpoint selection.
 
-**The goal is simple: get the lowest test_loss.** Compare equal-mouse-mean log loss on Days 12/13 at each run's query/valid-selected checkpoint, and report threshold-0.5 accuracy alongside it. These days are the user-designated development set. Every candidate must finish its declared budget; record its complete configuration and runtime. Different budgets are not equal-compute comparisons.
+**The goal is simple: get the lowest test_loss.** Compare equal-mouse-mean log loss on Days 12/13 at each run's query-selected checkpoint, and report threshold-0.5 accuracy alongside it. These days are the user-designated development set. Every candidate must finish its declared budget; record its complete configuration and runtime. Different budgets are not equal-compute comparisons.
 
 **VRAM** is a soft constraint. Some increase is acceptable for meaningful test_loss gains, but it should not blow up dramatically.
 

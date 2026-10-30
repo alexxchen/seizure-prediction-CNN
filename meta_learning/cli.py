@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
+
 from meta_learning.common import resolve_device, write_json
 from meta_learning.config import Config
 from meta_learning.data import DataStore, FeatureSplit
@@ -32,7 +34,7 @@ def train_main():
     parser.add_argument("--steps", type=int, help="Override the finite outer-step budget")
     parser.add_argument("--targets", type=parse_targets)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--plan-only", action="store_true", help="Audit fixed support/query tasks without reading waveforms or training")
+    parser.add_argument("--plan-only", action="store_true", help="Preview random event tasks without reading waveforms or training")
     args = parser.parse_args()
     config = Config.load(args.config).to_dict()
     for name, value in [("outer_steps", args.steps), ("targets", args.targets)]:
@@ -44,16 +46,16 @@ def train_main():
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, args.run_dir / "data")
     if args.plan_only:
         tasks, queries, episodes = {}, {}, {}
+        rng = np.random.default_rng(config.seed)
         for mouse in config.targets:
             tables, _ = sample_pipeline.build_tables(store.dataset, mouse)
             splits = {part: FeatureSplit(mouse, part, None, table.label.to_numpy(), table)
                       for part, table in tables.items()}
-            query = splits["validation"].subset_days(config.query_validation_days)
-            queries[mouse] = query
-            episodes[mouse] = split_episode(splits["train"], query)
+            pool = FeatureSplit.join_development([splits["train"], splits["validation"]]).subset_days(config.task_days)
+            queries[mouse] = pool
+            episodes[mouse] = split_episode(pool, config, rng)
             tasks[mouse] = [dict(episodes[mouse].describe(),
-                                 valid_days=(None if config.selection_validation_days is None else
-                                                 list(config.selection_validation_days)),
+                                 validation="Same query events; membership redrawn every outer step",
                                  test_split="test", test_days=sorted(splits["test"].table.day.unique().tolist()),
                                  test_samples=len(splits["test"].labels))]
         counts, weights = query_task_weights(queries, episodes)
@@ -75,7 +77,7 @@ def evaluate_main():
     parser = argparse.ArgumentParser(description="Replay query, valid, or test using selected checkpoints; no fitting")
     data_arguments(parser)
     parser.add_argument("--split", choices=["query", "valid", "test"], default="test",
-                        help="query: outer-training days; valid: checkpoint-selection days; test: development Days 12/13 (default)")
+                        help="query: saved query events (also validation); valid: unavailable; test: development Days 12/13 (default)")
     args = parser.parse_args()
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, args.run_dir / "data")
     result = evaluate_run(store, args.run_dir, resolve_device(args.device), args.split)

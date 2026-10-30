@@ -104,7 +104,7 @@ class MetaObjectiveTests(unittest.TestCase):
         self.assertGreater(float(replay_grad.abs().sum()), 0)
         self.assertEqual(report["epochs_run"], config.inner_epochs)
         self.assertEqual(report["optimizer_steps"], 9)
-        self.assertAlmostEqual(report["calibrated_support_loss"],
+        self.assertAlmostEqual(report["last_support_loss"],
                                report["outer_objective"]["support_loss_after_last_update"], places=12)
         _, query_grad, _ = self.evaluate(model, replace(config, support_loss_weight=0))
         self.assertGreater(float((query_grad - replay_grad).abs().sum()), 1e-6)
@@ -142,9 +142,11 @@ class MetaObjectiveTests(unittest.TestCase):
         import research
         root = Path(__file__).resolve().parents[1]
         lock = research.verify_protocol(root)
-        self.assertEqual(lock["version"], 5)
+        self.assertEqual(lock["version"], 14)
         self.assertIn("support_loss_weight", research.EDITABLE_CONFIG_FIELDS)
         self.assertNotIn("support_loss_weight", lock["fixed_config"])
+        self.assertEqual(lock["fixed_config"]["task_days"], list(range(9)) + [11])
+        self.assertEqual(lock["fixed_config"]["query_event_fraction"], 0.2)
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             for name in (*lock["fixed_sha256"], *research.EDITABLE, "protocol.lock.json"):
@@ -156,6 +158,11 @@ class MetaObjectiveTests(unittest.TestCase):
             config["support_loss_weight"] = 0.75
             path.write_text(json.dumps(config))
             research.verify_protocol(target)
+            config["query_event_fraction"] = 0.4
+            path.write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, "Fixed research configuration changed"):
+                research.verify_protocol(target)
+            config["query_event_fraction"] = 0.2
             config["seed"] += 1
             path.write_text(json.dumps(config))
             with self.assertRaisesRegex(ValueError, "Fixed research configuration changed"):
