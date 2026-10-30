@@ -10,7 +10,7 @@
   "inner_weight_decay": 0.0,
   "classifier_dropout": 0.0,
   "outer_lr": 0.001,
-  "outer_weight_decay": 0.0,
+  "outer_weight_decay": 20.0,
   "support_loss_weight": 1.0,
   "contrastive_loss_weight": 0.1,
   "augment_random_crop": true,
