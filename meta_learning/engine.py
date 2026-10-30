@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import math
 import random
 import subprocess
 import time
@@ -195,7 +196,8 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                            support_loss_weight=config.support_loss_weight,
                                            contrastive_loss_weight=config.contrastive_loss_weight,
                                            contrastive=dict(temperature=TEMPERATURE,
-                                               embedding="L2-normalized per-channel temporal mean/std of frontend outputs",
+                                               embedding="L2-normalized flattened full frontend output; no pooling or projection",
+                                               embedding_dimensions=math.prod(CNN_INPUT_SHAPE),
                                                scope="Current mouse's support pool and query crops; outer frontend gradients only",
                                                positives="All other same-class views, including crops from the same event or background interval",
                                                exclusions="Identical view index only; no-positive anchors counted and skipped",

@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "editable": [
     "meta_learning/frontend.py",
     "models/cnn.py",
@@ -57,7 +57,7 @@
   "objective": "minimum_test_mouse_mean_log_loss",
   "fixed_sha256": {
     ".gitattributes": "2b17c8aaf1304e32b7bbe27ce552bf623ecc49ae13f5589a85c2cf14a9c94fe5",
-    "AGENTS.md": "5c51f9706b2f85293cdadf33f197aeba417b707f82dcd776d757a424d9bf88aa",
+    "AGENTS.md": "f31c3898c08781921f2474ce5d8d8a27ff166721552a115d46d38b1a1378081d",
     "Dockerfile": "5c6800b3bbcdfb8f22490d017bde0132fa26294fb95e6e7eb227b5c8db32db49",
     "SETTINGS_MouseLFP.json": "284b6dfc1f34a253c68397ebf7e21b6fcc024fad218fb02a357e6a217551bc64",
     "evaluate.py": "c219c12657295af2b451396756db9f343fdbcb0f31d30490b52a8ef843227f5b",
@@ -67,10 +67,10 @@
     "meta_learning/cli.py": "7163d963f66a34790567999399d4d761c9c48f3504ccde70742d3cf4942288ca",
     "meta_learning/common.py": "c092352dfda2d5a7d50c8d5e06cb6a5d02efba4d63cc2c9cdeaf651749987a6b",
     "meta_learning/config.py": "ccda707f6dd7f3bcb842a440151132ed492e453e3db80de930df4acf703edbdd",
-    "meta_learning/contrastive.py": "3685f76c8cfe10f643fa8dfb7833f63c41b8e2af7b147d7383d06b4312b878aa",
+    "meta_learning/contrastive.py": "1b31650bec2989d20a5f7a267baf92d01a5f9dcd7b36805a63cbcd0fc5acf6c5",
     "meta_learning/crops.py": "90bcb634dfdcc32f07fa8323d58c8b5c0673b97c38f3ed3ce81a58a386cb1807",
     "meta_learning/data.py": "7cf47b2ea739f3b550ddd840bead14986ac3cb23df5d088bcf48be88fac73672",
-    "meta_learning/engine.py": "de65bbe155b30e952393f78fee951ececf40e3d621feb47e9a1f59867deed424",
+    "meta_learning/engine.py": "096229ff7a67387869072e481bc15693a8d5a0ea49869dec7eaaf1903cbdd2ee",
     "meta_learning/episodes.py": "337c2bb21dc15c6043f6f28454c3c9721ab2c0f6cb7ecace5da7dc58e94a637f",
     "meta_learning/frontend_contract.py": "51e6624364b62447db0550eb480cbe2d01cef9bd364b15d6d178b9a0af0961b8",
     "meta_learning/inner.py": "8b18ba1d619cef22c16fe4a4cea39145d5e96c1ab67db51e6c8b48cd046f01f2",
@@ -83,7 +83,7 @@
     "prepare.py": "1d863d71a76e5644883e7af358bf898f7401a196ade66332f14d167f2d0aa86b",
     "program.md": "0ed5991c45fa4b9afad163c75ae62d763689a76ddac1fb9a60a7f847d18d5936",
     "requirements.txt": "ab6364c7b0cbf691af52023d531c391c56099dafbd965d85abd9218deb46db31",
-    "research.py": "d0cb6a63447a220b3b51be1fa9531da6212654e0fc4246838e1b0f907c7fe807",
+    "research.py": "2fe624d59a63e5d7d222df68905471bd883046bedb8556b75555ee5c0494cc22",
     "run_meta.sh": "963f55a719c064559d2b78270e7c620b64ecfbd97271c7338f00caa12622776d",
     "run_research.ps1": "18ecda03df9d8439d912dcb7b4fb996d612a936a018fc914b615688b3c6c4988",
     "run_research.sh": "c7bee1e4e72d72a31c13e99747da282812f61dbed373c5e10d150c575177f0d4",

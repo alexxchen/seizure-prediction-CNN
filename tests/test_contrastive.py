@@ -9,7 +9,7 @@ from torch import nn
 
 from meta_learning.algorithms import meta_objective
 from meta_learning.config import Config
-from meta_learning.contrastive import TEMPERATURE, supervised_contrastive_loss
+from meta_learning.contrastive import TEMPERATURE, frontend_embedding, supervised_contrastive_loss
 from models.normalization import AxisBatchNorm
 
 
@@ -22,8 +22,8 @@ class ContrastiveTests(unittest.TestCase):
         features = torch.randn(8, 3, 5, generator=torch.Generator().manual_seed(2), dtype=torch.double,
                                requires_grad=True)
         labels = torch.tensor([1, 1, 1, 1, 0, 0, 0, 0])
-        summary = torch.cat((features.mean(-1), (features.var(-1, correction=0) + 1e-6).sqrt()), 1)
-        z = summary / summary.norm(dim=1, keepdim=True).clamp_min(1e-6)
+        full = features.reshape(len(features), -1)
+        z = full / full.norm(dim=1, keepdim=True).clamp_min(1e-6)
         terms = []
         for i in range(len(labels)):
             candidates = [j for j in range(len(labels)) if j != i]
@@ -40,6 +40,35 @@ class ContrastiveTests(unittest.TestCase):
             torch.testing.assert_close(actual, expected, atol=1e-12, rtol=1e-12)
             torch.testing.assert_close(gradient, reference_gradient, atol=1e-11, rtol=1e-11)
             self.assertEqual(report['valid_anchors'], 8)
+            self.assertEqual(report['embedding_dimensions'], 15)
+
+    def test_temporal_structure_is_retained_despite_identical_channel_moments(self):
+        # Opposite temporal patterns have identical per-channel means and variances.
+        pattern = torch.tensor([1., 0., -1., 0.], dtype=torch.double)
+        features = torch.stack((pattern, pattern, -pattern, -pattern)).unsqueeze(1)
+        torch.testing.assert_close(features.mean(-1), torch.zeros(4, 1, dtype=torch.double))
+        torch.testing.assert_close(features.var(-1), features.var(-1)[:1].expand(4, 1))
+        loss, _ = supervised_contrastive_loss(features, torch.tensor([0, 0, 1, 1]))
+        mixed, _ = supervised_contrastive_loss(features, torch.tensor([0, 1, 0, 1]))
+        self.assertLess(float(loss), 1e-6)
+        self.assertGreater(float(mixed), 1.)
+
+    def test_full_baseline_shape_and_chunked_gradients(self):
+        features = torch.randn(4, 32, 256, generator=torch.Generator().manual_seed(6),
+                               dtype=torch.double, requires_grad=True)
+        z = frontend_embedding(features)
+        self.assertEqual(z.shape, (4, 8192))
+        torch.testing.assert_close(z.norm(dim=1), torch.ones(4, dtype=torch.double))
+        labels = torch.tensor([0, 0, 1, 1])
+        whole, report = supervised_contrastive_loss(features, labels, chunk_size=4)
+        chunked, _ = supervised_contrastive_loss(features, labels, chunk_size=1)
+        torch.testing.assert_close(whole, chunked)
+        expected = torch.autograd.grad(whole, features)[0]
+        actual = torch.autograd.grad(chunked, features)[0]
+        self.assertTrue(torch.isfinite(actual).all())
+        self.assertGreater(float(actual.abs().sum()), 0.)
+        torch.testing.assert_close(actual, expected)
+        self.assertEqual(report['embedding_dimensions'], 8192)
 
     def test_same_event_crop_views_remain_positive_partners(self):
         # Two views per class can originate from one event/interval per class.

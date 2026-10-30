@@ -10,10 +10,8 @@ ANCHOR_CHUNK_SIZE = 256
 
 
 def frontend_embedding(features):
-    """Sample-local channel mean/std summary; no fitted statistics or projection head."""
-    values = features.reshape(len(features), features.shape[1], -1)
-    moments = torch.cat((values.mean(dim=-1), (values.var(dim=-1, correction=0) + 1e-6).sqrt()), dim=1)
-    return F.normalize(moments, dim=1, eps=1e-6)
+    """Normalize each complete channel/time output without pooling or projection."""
+    return F.normalize(features.flatten(start_dim=1), dim=1, eps=1e-6)
 
 
 def supervised_contrastive_loss(features, labels, *, chunk_size=ANCHOR_CHUNK_SIZE):
@@ -37,7 +35,7 @@ def supervised_contrastive_loss(features, labels, *, chunk_size=ANCHOR_CHUNK_SIZ
     report = dict(samples=len(labels), valid_anchors=len(anchors), skipped_anchors=len(labels) - len(anchors),
                   valid_anchors_by_class={str(label): int((labels[anchors] == label).sum()) for label in (0, 1)},
                   pairing="All other same-class views are positives; exclude self only", temperature=TEMPERATURE,
-                  embedding="L2-normalized per-channel temporal mean/std", embedding_dimensions=2 * features.shape[1])
+                  embedding="L2-normalized flattened full frontend output", embedding_dimensions=features[0].numel())
     if not len(anchors):
         return features.sum() * 0, report
     embedding = frontend_embedding(features)
