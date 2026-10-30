@@ -16,9 +16,10 @@ import torch
 from torch import nn
 
 from meta_learning import engine
+from meta_learning.algorithms import meta_objective
 from meta_learning.config import Config, TASK_DAYS
 from meta_learning.data import FeatureSplit
-from meta_learning.episodes import episode_from_events, event_sample_weights, query_task_weights, split_episode
+from meta_learning.episodes import episode_batch, episode_from_events, event_sample_weights, query_task_weights, split_episode
 from models.normalization import AxisBatchNorm
 
 
@@ -153,7 +154,7 @@ class EventTaskTests(unittest.TestCase):
         return Config(targets=('X1',), outer_steps=2, inner_epochs=2, inner_checkpoint_steps=2,
                       batch_size=8, frontend_batch_size=5, support_crops=1, support_pool_crops=2,
                       query_crops=2, eval_every=1, checkpoint_every=1, classifier_dropout=0.1,
-                      support_loss_weight=1, label_smoothing=0)
+                      support_loss_weight=1, contrastive_loss_weight=0.1, label_smoothing=0)
 
     def run_training(self, directory, store, *, resume=False, interrupt=False):
         original = engine.progress_event
@@ -214,6 +215,48 @@ class EventTaskTests(unittest.TestCase):
                 else:
                     for key in expected:
                         torch.testing.assert_close(state[key], expected[key], atol=0, rtol=0)
+
+    def test_contrastive_pool_full_hypergradient_and_sampling_parity(self):
+        config = replace(self.config(), classifier_dropout=0, inner_checkpoint_steps=0)
+        split, model = development_pool(), TinyModel().double()
+        episode = split_episode(split, config, np.random.default_rng(3))
+
+        def evaluate(checkpoint_steps, coefficient=.1):
+            rng = np.random.default_rng(42)
+            support, query, weights = episode_batch(split, split, episode,
+                replace(config, contrastive_loss_weight=coefficient), rng, torch.device('cpu'))
+            query = (query[0].double(), query[1])
+            # Pool waveforms are float32 by contract; match the toy frontend's precision.
+            waveforms = support.waveforms
+            support.waveforms = lambda **kwargs: (batch.double() for batch in waveforms(**kwargs))
+            torch.manual_seed(6)
+            loss = meta_objective(model, support, query,
+                replace(config, inner_checkpoint_steps=checkpoint_steps, contrastive_loss_weight=coefficient),
+                query_weights=weights.double())
+            torch_rng = torch.get_rng_state().clone()
+            gradient = torch.autograd.grad(loss, tuple(model.frontend.parameters()))
+            self.assertTrue(torch.equal(torch_rng, torch.get_rng_state()))
+            return loss.detach(), gradient, copy.deepcopy(rng.bit_generator.state), support
+
+        full, gradient, state, pool = evaluate(0)
+        replay, replay_gradient, replay_state, _ = evaluate(2)
+        torch.testing.assert_close(full, replay, atol=1e-12, rtol=1e-12)
+        for expected, actual in zip(gradient, replay_gradient):
+            torch.testing.assert_close(expected, actual, atol=1e-10, rtol=1e-10)
+        self.assertEqual(state, replay_state)
+        _, _, disabled_state, disabled_pool = evaluate(2, 0)
+        self.assertEqual(state, disabled_state)
+        np.testing.assert_array_equal(pool.indices, disabled_pool.indices)
+        np.testing.assert_array_equal(pool.selections, disabled_pool.selections)
+        origin, epsilon = model.frontend.weight[0, 0].item(), 1e-5
+        values = []
+        for delta in (epsilon, -epsilon):
+            with torch.no_grad():
+                model.frontend.weight[0, 0] = origin + delta
+            values.append(evaluate(2)[0])
+        with torch.no_grad():
+            model.frontend.weight[0, 0] = origin
+        torch.testing.assert_close(gradient[0][0, 0], (values[0] - values[1]) / (2 * epsilon), atol=1e-7, rtol=1e-5)
 
 
 if __name__ == '__main__':

@@ -25,6 +25,7 @@ class Config:
     outer_lr: float = 0.001
     outer_weight_decay: float = 0.0
     support_loss_weight: float = 0.1
+    contrastive_loss_weight: float = 0.0
     augment_random_crop: bool = True
     random_crop_scope: str = "both"
     query_crops: int = 64
@@ -68,6 +69,9 @@ class Config:
         if (type(self.support_loss_weight) not in {float, int} or not math.isfinite(self.support_loss_weight)
                 or self.support_loss_weight < 0):
             raise ValueError("support_loss_weight must be finite and nonnegative")
+        if (type(self.contrastive_loss_weight) not in {float, int} or not math.isfinite(self.contrastive_loss_weight)
+                or self.contrastive_loss_weight < 0):
+            raise ValueError("contrastive_loss_weight must be finite and nonnegative")
         if type(self.augment_random_crop) is not bool:
             raise ValueError("augment_random_crop must be true or false")
         if self.random_crop_scope not in {"both", "query", "support"}:

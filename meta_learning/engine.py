@@ -15,6 +15,7 @@ from meta_learning.frontend_contract import CNN_INPUT_SHAPE
 from meta_learning.waveform import WAVEFORM_CONFIG
 from meta_learning.adaptation import adapt_model, predict, validate_fresh_crops
 from meta_learning.algorithms import meta_objective
+from meta_learning.contrastive import TEMPERATURE
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json, runtime_identity
 from meta_learning.config import Config
 from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch, query_task_weights, episode_from_events
@@ -190,8 +191,15 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       selection_criterion=selection_criterion(config),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
                                        "on frontend weight matrices; frontend biases and normalization parameters undecayed"),
-                      outer_objective=dict(formula="query_loss + support_loss_weight * support_loss_after_last_update",
+                      outer_objective=dict(formula="query_loss + support_loss_weight * support_loss_after_last_update + contrastive_loss_weight * contrastive_loss",
                                            support_loss_weight=config.support_loss_weight,
+                                           contrastive_loss_weight=config.contrastive_loss_weight,
+                                           contrastive=dict(temperature=TEMPERATURE,
+                                               embedding="L2-normalized per-channel temporal mean/std of frontend outputs",
+                                               scope="Current mouse's support pool and query crops; outer frontend gradients only",
+                                               positives="All other same-class views, including crops from the same event or background interval",
+                                               exclusions="Identical view index only; no-positive anchors counted and skipped",
+                                               reduction="Uniform mean over valid anchors; full comparison set with chunked checkpointing"),
                                            support="Mean over all fitted support samples after the final inner update, "
                                                    "in eval mode with final support-only BatchNorm statistics",
                                            label_smoothing=config.label_smoothing,
@@ -382,12 +390,13 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                        outer_loss=float(sum(losses)), gradient_norm=float(grad_norm))
             objective_subjects = {fit["mouse"]: fit["outer_objective"] for fit in inner_reports}
             row["outer_objective"] = dict(
-                support_loss_weight=config.support_loss_weight, timing="before_outer_update",
+                support_loss_weight=config.support_loss_weight, contrastive_loss_weight=config.contrastive_loss_weight,
+                timing="before_outer_update",
                 aggregation="Eligible query-event weighted across mice",
                 aggregate={key: float(sum(task_weights[mouse] * metrics[key]
                                           for mouse, metrics in objective_subjects.items()))
                            for key in ("query_loss", "support_loss_after_last_update",
-                                       "weighted_support_loss", "total_loss")},
+                                       "weighted_support_loss", "contrastive_loss", "weighted_contrastive_loss", "total_loss")},
                 subjects=objective_subjects)
             subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
             aggregate = {key: float(sum(task_weights[mouse] * metrics[key]

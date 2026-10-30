@@ -153,7 +153,7 @@ def check_candidate(device="cpu"):
                     parameters=sum(p.numel() for p in frontend.parameters()),
                     cnn_parameters=sum(p.numel() for p in model.cnn.parameters()), device=str(device),
                     coverage="Synthetic shape, initialization RNG, chunk/sample isolation, state, silence, "
-                             "frontend gradients, CNN logits and checkpointed query plus final-support hypergradients")
+                             "frontend gradients, CNN logits and checkpointed query, final-support and supervised contrastive hypergradients")
 
 
 if __name__ == "__main__":
