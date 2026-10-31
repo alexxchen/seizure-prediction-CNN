@@ -198,7 +198,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                                            contrastive=dict(temperature=TEMPERATURE,
                                                embedding="L2-normalized flattened full frontend output; no pooling or projection",
                                                embedding_dimensions=math.prod(CNN_INPUT_SHAPE),
-                                               scope="Current mouse's support pool and query crops; outer frontend gradients only",
+                                               scope="Current mouse's complete support pool only; no query views; outer frontend gradients only",
                                                positives="All other same-class views, including crops from the same event or background interval",
                                                exclusions="Identical view index only; no-positive anchors counted and skipped",
                                                reduction="Uniform mean over valid anchors; full comparison set with chunked checkpointing"),

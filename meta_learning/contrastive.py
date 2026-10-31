@@ -15,7 +15,7 @@ def frontend_embedding(features):
 
 
 def supervised_contrastive_loss(features, labels, *, chunk_size=ANCHOR_CHUNK_SIZE):
-    """Standard SupCon pairing on one mouse's support pool plus query views.
+    """Standard SupCon pairing on the supplied views (the meta support pool only).
 
     Every other same-class view is positive, including crops from the same event
     or background interval. Only the identical view index is excluded. Each valid

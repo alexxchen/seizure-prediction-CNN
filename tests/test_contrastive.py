@@ -128,8 +128,7 @@ class ContrastiveTests(unittest.TestCase):
             return loss.detach(), torch.cat([value.flatten() for value in grad]), report
 
         baseline, base_gradient, off = evaluate(0, 0)
-        raw, _ = supervised_contrastive_loss(model.frontend(torch.cat((support[0], query[0]))),
-            torch.cat((support[1], query[1])))
+        raw, _ = supervised_contrastive_loss(model.frontend(support[0]), support[1])
         direct = torch.cat([value.flatten() for value in torch.autograd.grad(raw, tuple(model.frontend.parameters()))])
         for coefficient in (.1, .3):
             full, gradient, report = evaluate(coefficient, 0)
@@ -140,10 +139,38 @@ class ContrastiveTests(unittest.TestCase):
             torch.testing.assert_close(gradient, replay_gradient, atol=1e-10, rtol=1e-10)
             self.assertAlmostEqual(report['outer_objective']['weighted_contrastive_loss'],
                                    coefficient * float(raw.detach()), places=12)
+            self.assertEqual(report['outer_objective']['contrastive']['samples'], len(support[1]))
+            self.assertIn('no query views', report['outer_objective']['contrastive']['scope'])
         self.assertFalse(off['outer_objective']['contrastive']['enabled'])
         for name, value in state.items():
             torch.testing.assert_close(model.state_dict()[name], value, atol=0, rtol=0)
         self.assertTrue(all(parameter.grad is None for parameter in model.cnn.parameters()))
+
+    def test_query_inputs_and_labels_never_enter_contrastive_pairing(self):
+        torch.manual_seed(15)
+        model = nn.Module()
+        model.frontend = nn.Linear(2, 3).double()
+        model.cnn = nn.Linear(3, 2).double()
+        support = (torch.randn(6, 2, dtype=torch.double), torch.tensor([0, 0, 1, 1, 0, 1]))
+        config = Config(inner_epochs=2, batch_size=2, inner_lr=.02,
+                        inner_checkpoint_steps=2, support_loss_weight=.4, label_smoothing=0)
+
+        def evaluate(query, coefficient):
+            torch.manual_seed(8)
+            loss, report = meta_objective(model, support, query,
+                replace(config, contrastive_loss_weight=coefficient), return_diagnostics=True)
+            gradient = torch.autograd.grad(loss, query[0])[0]
+            return loss.detach(), gradient, report['outer_objective']['contrastive_loss']
+
+        expected, _ = supervised_contrastive_loss(model.frontend(support[0]), support[1])
+        queries = [(torch.randn(4, 2, dtype=torch.double).requires_grad_(), torch.tensor([0, 1, 1, 0])),
+                   ((torch.randn(8, 2, dtype=torch.double) * 20).requires_grad_(), torch.zeros(8, dtype=torch.long))]
+        for query in queries:
+            baseline, base_gradient, _ = evaluate(query, 0)
+            regularized, gradient, raw = evaluate(query, .3)
+            self.assertAlmostEqual(raw, float(expected.detach()), places=12)
+            torch.testing.assert_close(regularized - baseline, .3 * expected.detach(), atol=1e-12, rtol=1e-12)
+            torch.testing.assert_close(gradient, base_gradient, atol=0, rtol=0)
 
     def test_coefficient_validation_and_roundtrip(self):
         for value in (0, .1, 2.):

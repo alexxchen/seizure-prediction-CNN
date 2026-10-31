@@ -37,9 +37,8 @@ def meta_objective(model, support, query, config, *, return_diagnostics=False, p
     contrastive_report = dict(enabled=False)
     if config.contrastive_loss_weight:
         support_features, support_labels = fit.source.fitted(differentiable=True)
-        contrastive_loss, contrastive_report = supervised_contrastive_loss(
-            torch.cat((support_features, query_features)), torch.cat((support_labels, query[1])))
-        contrastive_report['enabled'] = True
+        contrastive_loss, contrastive_report = supervised_contrastive_loss(support_features, support_labels)
+        contrastive_report.update(enabled=True, scope="Current mouse's complete support pool only; no query views")
         loss = loss + config.contrastive_loss_weight * contrastive_loss
     if not return_diagnostics:
         return loss
