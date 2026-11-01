@@ -13,6 +13,17 @@ from meta_learning.contrastive import TEMPERATURE, frontend_embedding, supervise
 from models.normalization import AxisBatchNorm
 
 
+class ProjectedToyFrontend(nn.Linear):
+    projection_dim = 2
+
+    def __init__(self):
+        super().__init__(2, 3)
+        self.projection_head = nn.Sequential(nn.Linear(3, 4), nn.ReLU(), nn.Linear(4, self.projection_dim))
+
+    def project(self, features):
+        return self.projection_head(features)
+
+
 class ContrastiveTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -109,7 +120,7 @@ class ContrastiveTests(unittest.TestCase):
     def test_meta_coefficient_gradient_and_checkpoint_replay(self):
         torch.manual_seed(5)
         model = nn.Module()
-        model.frontend = nn.Linear(2, 3).double()
+        model.frontend = ProjectedToyFrontend().double()
         model.cnn = nn.Sequential(AxisBatchNorm(3, axis=1), nn.Tanh(), nn.Dropout(), nn.Linear(3, 2)).double()
         state = copy.deepcopy(model.state_dict())
         support = (torch.randn(6, 2, dtype=torch.double), torch.tensor([0, 0, 1, 1, 0, 1]))
@@ -123,12 +134,14 @@ class ContrastiveTests(unittest.TestCase):
                 replace(config, contrastive_loss_weight=coefficient, inner_checkpoint_steps=checkpoint_steps),
                 return_diagnostics=True)
             rng = torch.get_rng_state().clone()
-            grad = torch.autograd.grad(loss, tuple(model.frontend.parameters()))
+            parameters = tuple(model.frontend.parameters())
+            grad = torch.autograd.grad(loss, parameters, allow_unused=True)
             self.assertTrue(torch.equal(rng, torch.get_rng_state()))
-            return loss.detach(), torch.cat([value.flatten() for value in grad]), report
+            return loss.detach(), torch.cat([(torch.zeros_like(parameter) if value is None else value).flatten()
+                                            for parameter, value in zip(parameters, grad)]), report
 
         baseline, base_gradient, off = evaluate(0, 0)
-        raw, _ = supervised_contrastive_loss(model.frontend(support[0]), support[1])
+        raw, _ = supervised_contrastive_loss(model.frontend.project(model.frontend(support[0])), support[1])
         direct = torch.cat([value.flatten() for value in torch.autograd.grad(raw, tuple(model.frontend.parameters()))])
         for coefficient in (.1, .3):
             full, gradient, report = evaluate(coefficient, 0)
@@ -140,6 +153,7 @@ class ContrastiveTests(unittest.TestCase):
             self.assertAlmostEqual(report['outer_objective']['weighted_contrastive_loss'],
                                    coefficient * float(raw.detach()), places=12)
             self.assertEqual(report['outer_objective']['contrastive']['samples'], len(support[1]))
+            self.assertEqual(report['outer_objective']['contrastive']['embedding_dimensions'], model.frontend.projection_dim)
             self.assertIn('no query views', report['outer_objective']['contrastive']['scope'])
         self.assertFalse(off['outer_objective']['contrastive']['enabled'])
         for name, value in state.items():
@@ -149,7 +163,7 @@ class ContrastiveTests(unittest.TestCase):
     def test_query_inputs_and_labels_never_enter_contrastive_pairing(self):
         torch.manual_seed(15)
         model = nn.Module()
-        model.frontend = nn.Linear(2, 3).double()
+        model.frontend = ProjectedToyFrontend().double()
         model.cnn = nn.Linear(3, 2).double()
         support = (torch.randn(6, 2, dtype=torch.double), torch.tensor([0, 0, 1, 1, 0, 1]))
         config = Config(inner_epochs=2, batch_size=2, inner_lr=.02,
@@ -162,7 +176,7 @@ class ContrastiveTests(unittest.TestCase):
             gradient = torch.autograd.grad(loss, query[0])[0]
             return loss.detach(), gradient, report['outer_objective']['contrastive_loss']
 
-        expected, _ = supervised_contrastive_loss(model.frontend(support[0]), support[1])
+        expected, _ = supervised_contrastive_loss(model.frontend.project(model.frontend(support[0])), support[1])
         queries = [(torch.randn(4, 2, dtype=torch.double).requires_grad_(), torch.tensor([0, 1, 1, 0])),
                    ((torch.randn(8, 2, dtype=torch.double) * 20).requires_grad_(), torch.zeros(8, dtype=torch.long))]
         for query in queries:
@@ -171,6 +185,51 @@ class ContrastiveTests(unittest.TestCase):
             self.assertAlmostEqual(raw, float(expected.detach()), places=12)
             torch.testing.assert_close(regularized - baseline, .3 * expected.detach(), atol=1e-12, rtol=1e-12)
             torch.testing.assert_close(gradient, base_gradient, atol=0, rtol=0)
+
+    def test_projection_shape_gradients_checkpoint_and_inference_isolation(self):
+        from meta_learning.frontend_contract import Frontend
+
+        frontend = Frontend(seed=0, batch_size=3).double()
+        features = torch.randn(4, 32, 256, dtype=torch.double, requires_grad=True)
+        projected = frontend.project(features)
+        self.assertEqual(projected.shape, (4, 32))
+        expected = frontend.network.projection_head(features.mean(dim=-1))
+        torch.testing.assert_close(projected, expected, atol=1e-12, rtol=1e-12)
+        loss, report = supervised_contrastive_loss(projected, torch.tensor([0, 0, 1, 1]))
+        projection_parameters = tuple(frontend.network.projection_head.parameters())
+        self.assertEqual(sum(parameter.numel() for parameter in projection_parameters), 2112)
+        self.assertEqual(sum(parameter.numel() for parameter in frontend.parameters()), 45232)
+        gradients = torch.autograd.grad(loss, (features, *projection_parameters))
+        self.assertTrue(all(torch.isfinite(value).all() and value.abs().sum() > 0 for value in gradients))
+        torch.testing.assert_close(gradients[0], gradients[0][:, :, :1].expand_as(gradients[0]))
+        self.assertEqual(report['embedding_dimensions'], 32)
+        frontend.batch_size = 1
+        with torch.no_grad():
+            torch.testing.assert_close(projected, frontend.project(features), atol=1e-12, rtol=1e-12)
+            torch.testing.assert_close(projected, frontend.project(features.flip(-1)), atol=1e-12, rtol=1e-12)
+            self.assertTrue(torch.isfinite(frontend.project(torch.zeros_like(features))).all())
+        clone = Frontend(seed=7, batch_size=2).double()
+        clone.load_state_dict(frontend.state_dict(), strict=True)
+        with torch.no_grad():
+            torch.testing.assert_close(clone.project(features), projected, atol=1e-12, rtol=1e-12)
+            waveforms = torch.randn(2, 28672, dtype=torch.double)
+            before = frontend(waveforms)
+            for parameter in projection_parameters:
+                parameter.add_(1)
+            torch.testing.assert_close(frontend(waveforms), before, atol=0, rtol=0)
+
+    def test_classification_has_no_projection_head_gradient_without_supcon(self):
+        from unittest.mock import patch
+
+        model = nn.Module()
+        model.frontend = ProjectedToyFrontend().double()
+        model.cnn = nn.Linear(3, 2).double()
+        data = (torch.randn(4, 2, dtype=torch.double), torch.tensor([0, 0, 1, 1]))
+        config = Config(inner_epochs=2, batch_size=2, inner_checkpoint_steps=2, label_smoothing=0)
+        with patch.object(model.frontend, 'project', side_effect=AssertionError('Disabled SupCon must skip projection')):
+            loss = meta_objective(model, data, data, config)
+        gradients = torch.autograd.grad(loss, tuple(model.frontend.projection_head.parameters()), allow_unused=True)
+        self.assertTrue(all(value is None for value in gradients))
 
     def test_coefficient_validation_and_roundtrip(self):
         for value in (0, .1, 2.):

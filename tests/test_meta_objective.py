@@ -142,7 +142,7 @@ class MetaObjectiveTests(unittest.TestCase):
         import research
         root = Path(__file__).resolve().parents[1]
         lock = research.verify_protocol(root)
-        self.assertEqual(lock["version"], 17)
+        self.assertEqual(lock["version"], 18)
         self.assertIn("support_loss_weight", research.EDITABLE_CONFIG_FIELDS)
         self.assertIn("contrastive_loss_weight", research.EDITABLE_CONFIG_FIELDS)
         self.assertNotIn("support_loss_weight", lock["fixed_config"])

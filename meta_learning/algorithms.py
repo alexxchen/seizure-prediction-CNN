@@ -37,8 +37,11 @@ def meta_objective(model, support, query, config, *, return_diagnostics=False, p
     contrastive_report = dict(enabled=False)
     if config.contrastive_loss_weight:
         support_features, support_labels = fit.source.fitted(differentiable=True)
-        contrastive_loss, contrastive_report = supervised_contrastive_loss(support_features, support_labels)
-        contrastive_report.update(enabled=True, scope="Current mouse's complete support pool only; no query views")
+        projected = model.frontend.project(support_features)
+        contrastive_loss, contrastive_report = supervised_contrastive_loss(projected, support_labels)
+        contrastive_report.update(enabled=True, scope="Current mouse's complete support pool only; no query views",
+            embedding="L2-normalized MLP projection of temporal channel means",
+            source_dimensions=support_features[0].numel())
         loss = loss + config.contrastive_loss_weight * contrastive_loss
     if not return_diagnostics:
         return loss

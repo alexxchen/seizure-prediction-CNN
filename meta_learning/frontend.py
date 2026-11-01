@@ -22,6 +22,7 @@ FRONTEND_CONFIG = dict(architecture="waveform_resnet1d", input_samples=28672,
           "(zero-initialized), added to the residual stream",
     head="GroupNorm(8) -> GELU -> Conv1d(32 -> output_channels, k1); output is a (channels, time) sequence",
     output_channels=32, time_bins=256,
+    contrastive_projection="Global temporal mean -> Linear(32, 32) -> ReLU -> Linear(32, 32); SupCon only",
     initialization="Seeded PyTorch defaults (random); zero-initialized last conv in each residual block")
 
 
@@ -64,6 +65,7 @@ class WaveformFrontend(nn.Module):
     """One generic 1-D ResNet from waveform to a (channels, time) feature sequence."""
 
     output_shape = (FRONTEND_CONFIG["output_channels"], FRONTEND_CONFIG["time_bins"])
+    projection_dim = output_shape[0]
 
     def __init__(self, seed=0):
         super().__init__()
@@ -84,6 +86,8 @@ class WaveformFrontend(nn.Module):
             width = c["stages"][-1][0]
             self.head = nn.Sequential(nn.GroupNorm(c["norm_groups"], width), nn.GELU(),
                                       nn.Conv1d(width, c["output_channels"], 1))
+            self.projection_head = nn.Sequential(nn.Linear(self.output_shape[0], self.projection_dim),
+                                                 nn.ReLU(), nn.Linear(self.projection_dim, self.projection_dim))
 
     def forward(self, waveform):
         check_waveform(waveform)
@@ -92,3 +96,7 @@ class WaveformFrontend(nn.Module):
         if features.shape[2] != c["time_bins"]:
             raise ValueError("Convolution strides do not produce the configured time bins")
         return features
+
+    def project(self, features):
+        """Pool time and project cached features for SupCon, leaving the CNN input sequence intact."""
+        return self.projection_head(features.mean(dim=-1))

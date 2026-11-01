@@ -49,9 +49,15 @@ def development_pool(mouse='X1'):
 
 
 class TinyFrontend(nn.Linear):
+    projection_dim = 2
+
     def __init__(self, batch_size):
         super().__init__(2, 3)
         self.batch_size = batch_size
+        self.projection_head = nn.Sequential(nn.Linear(3, 4), nn.ReLU(), nn.Linear(4, self.projection_dim))
+
+    def project(self, features):
+        return self.projection_head(features)
 
     def decay_parameters(self):
         return (self.weight,)
@@ -257,6 +263,16 @@ class EventTaskTests(unittest.TestCase):
         with torch.no_grad():
             model.frontend.weight[0, 0] = origin
         torch.testing.assert_close(gradient[0][0, 0], (values[0] - values[1]) / (2 * epsilon), atol=1e-7, rtol=1e-5)
+        projection = model.frontend.projection_head[0].weight
+        origin = projection[0, 0].item()
+        values = []
+        for delta in (epsilon, -epsilon):
+            with torch.no_grad():
+                projection[0, 0] = origin + delta
+            values.append(evaluate(2)[0])
+        with torch.no_grad():
+            projection[0, 0] = origin
+        torch.testing.assert_close(gradient[2][0, 0], (values[0] - values[1]) / (2 * epsilon), atol=1e-7, rtol=1e-5)
 
 
 if __name__ == '__main__':
