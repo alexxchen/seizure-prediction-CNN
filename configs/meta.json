@@ -12,7 +12,7 @@
   "outer_lr": 0.001,
   "outer_weight_decay": 0.0,
   "support_loss_weight": 1.0,
-  "contrastive_loss_weight": 0.5,
+  "contrastive_loss_weight": 5.0,
   "augment_random_crop": true,
   "random_crop_scope": "both",
   "query_crops": 64,
