@@ -64,7 +64,7 @@
     "meta_learning/__init__.py": "55dffe1474531f59c55668f69d74570605303ba03c2bf0704887e17ea52d707f",
     "meta_learning/adaptation.py": "d485dcfff3778e6e8425088ea828ef37cb69e7ede2cf6753c0474beef1803a9e",
     "meta_learning/algorithms.py": "eb564c881d7325923704864c304736159f818759f3292d2e59bc313f9db8f79a",
-    "meta_learning/cli.py": "7163d963f66a34790567999399d4d761c9c48f3504ccde70742d3cf4942288ca",
+    "meta_learning/cli.py": "87835bad28ccce6e0792a69e3e5799c008dd0587858b828559a00a5ce94cf03a",
     "meta_learning/common.py": "c092352dfda2d5a7d50c8d5e06cb6a5d02efba4d63cc2c9cdeaf651749987a6b",
     "meta_learning/config.py": "ccda707f6dd7f3bcb842a440151132ed492e453e3db80de930df4acf703edbdd",
     "meta_learning/contrastive.py": "f4e874c963907f5a3b9d1081cc66e3e81090fa43a7636cade51ef1d6483e69d3",

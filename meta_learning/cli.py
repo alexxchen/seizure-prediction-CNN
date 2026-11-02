@@ -10,7 +10,7 @@ from meta_learning.common import resolve_device, write_json
 from meta_learning.config import Config
 from meta_learning.data import DataStore, FeatureSplit
 from meta_learning.engine import evaluate_run, train_run
-from meta_learning.episodes import split_episode, query_task_weights
+from meta_learning.episodes import split_episode
 from meta_learning.training_log import progress_event
 from prepare import parse_targets, source_settings
 import sample_pipeline
@@ -45,25 +45,25 @@ def train_main():
         parser.error("Use a separate plan directory to preserve an existing training run")
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, args.run_dir / "data")
     if args.plan_only:
-        tasks, queries, episodes = {}, {}, {}
+        tasks, episodes = {}, {}
         rng = np.random.default_rng(config.seed)
         for mouse in config.targets:
             tables, _ = sample_pipeline.build_tables(store.dataset, mouse)
             splits = {part: FeatureSplit(mouse, part, None, table.label.to_numpy(), table)
                       for part, table in tables.items()}
             pool = FeatureSplit.join_development([splits["train"], splits["validation"]]).subset_days(config.task_days)
-            queries[mouse] = pool
             episodes[mouse] = split_episode(pool, config, rng)
             tasks[mouse] = [dict(episodes[mouse].describe(),
                                  validation="Same query events; membership redrawn every outer step",
                                  test_split="test", test_days=sorted(splits["test"].table.day.unique().tolist()),
                                  test_samples=len(splits["test"].labels))]
-        counts, weights = query_task_weights(queries, episodes)
+        counts = {mouse: len(episode.query_events) for mouse, episode in episodes.items()}
         for mouse in tasks:
-            tasks[mouse][0].update(query_events=counts[mouse], outer_weight=weights[mouse])
+            tasks[mouse][0].update(query_events=counts[mouse])
         write_json(args.run_dir / "episodes.json", tasks)
         print(json.dumps(dict(training=False, episodes={mouse: len(rows) for mouse, rows in tasks.items()},
-                              query_events=counts, outer_task_weights=weights)))
+                              query_events=counts, tasks_per_step=1,
+                              mouse_sampling="Uniform with replacement; direct unweighted mouse objective")))
         return
     result = train_run(config, store, args.run_dir, args.prepared_dir, resolve_device(args.device), args.resume)
     # Plot only after a successful run, including a completed compatible resume.

@@ -15,7 +15,7 @@ import pandas as pd
 import torch
 from torch import nn
 
-from meta_learning import engine
+from meta_learning import cli, engine
 from meta_learning.algorithms import meta_objective
 from meta_learning.config import Config, TASK_DAYS
 from meta_learning.data import FeatureSplit
@@ -202,6 +202,33 @@ class EventTaskTests(unittest.TestCase):
             self.assertLess(abs(frequency - 0.25), 0.015)
         self.assertTrue(any(draws[i][0] == draws[i + 1][0] for i in range(len(draws) - 1)))
         self.assertTrue(all(info == {'probability': 0.25} for _, info in draws))
+
+    def test_command_line_plan_has_single_mouse_policy_without_event_weights(self):
+        store = MultiMouseStore()
+        tables = {mouse: {part: source_part(mouse, part, days) for part, days in
+            [('train', range(8)), ('validation', [8, 11]), ('test', [12, 13])]}
+            for mouse in store.pools}
+        config = replace(self.config(), targets=tuple(store.pools))
+        with tempfile.TemporaryDirectory() as temporary:
+            output = io.StringIO()
+            with patch('sys.argv', ['train.py', '--run-dir', temporary, '--plan-only']), \
+                    patch.object(cli.Config, 'load', return_value=config), \
+                    patch.object(cli, 'DataStore', return_value=store), \
+                    patch.object(cli.sample_pipeline, 'build_tables',
+                        side_effect=lambda dataset, mouse: ({part: split.table for part, split in tables[mouse].items()}, None)), \
+                    patch.object(cli, 'train_run', side_effect=AssertionError('Planning must not train')), \
+                    contextlib.redirect_stdout(output):
+                cli.train_main()
+            preview = json.loads(output.getvalue())
+            self.assertEqual(preview['tasks_per_step'], 1)
+            self.assertFalse(preview['training'])
+            self.assertNotIn('outer_task_weights', preview)
+            tasks = json.loads((Path(temporary) / 'episodes.json').read_text())
+            self.assertEqual(set(tasks), set(config.targets))
+            for mouse in config.targets:
+                self.assertNotIn('outer_weight', tasks[mouse][0])
+                self.assertEqual(len(tasks[mouse][0]['query_event_ids']), 4)
+                self.assertEqual(len(tasks[mouse][0]['support_event_ids']), 16)
 
     def test_single_mouse_updates_all_mouse_evaluation_and_exact_resume(self):
         config = replace(self.config(), targets=('X1', 'X2'), outer_steps=6, inner_epochs=1,
