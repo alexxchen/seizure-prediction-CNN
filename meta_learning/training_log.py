@@ -67,7 +67,8 @@ def readable_lines(stage, row, total=None):
             f"SGD lr={config['inner_lr']:g}, decay={config['inner_weight_decay']:g} | AdamW lr={config['outer_lr']:g}, decay={config['outer_weight_decay']:g} | dropout={config['classifier_dropout']:g} | support weight={config['support_loss_weight']:g}",
             f"Supervised frontend contrastive weight={config.get('contrastive_loss_weight', 0):g}",
             'Values are accuracy / loss. S=support, Q=query, -> new=independent crop draw.',
-            'Task rows: final fitted CNN. MEAN: equal mouse mean. Objective: query-event-weighted outer loss.',
+            'Sampling: one uniform mouse with replacement per step; unweighted mouse objective.',
+            'Task/STEP rows: selected mouse only. EVAL MEAN: equal mean over every configured mouse.',
             'Gaps are fitted accuracy minus new-crop accuracy, in percentage points (pp).',
             'EVAL: fresh support-only CNN refits; Q uses fixed windows; test never selects checkpoints.',
             f"Support summary: {row['support_scope']}",
@@ -91,7 +92,8 @@ def readable_lines(stage, row, total=None):
         query = average(row['query'].get('subjects', {}).values())
         new_support = average(support_diagnostics.values())
         new_query = average(row.get('query_crop_validation', {}).get('subjects', {}).values())
-        lines = [f"{prefix} MEAN     | S {metric(support)} -> new {metric(new_support)} | Q {metric(query)} -> new {metric(new_query)}"]
+        summary = f"STEP {row['mice'][0]}" if len(row['mice']) == 1 else 'MEAN'
+        lines = [f"{prefix} {summary:<8} | S {metric(support)} -> new {metric(new_support)} | Q {metric(query)} -> new {metric(new_query)}"]
         parts = [f"objective={row['outer_loss']:.4f}"]
         objective = row.get('outer_objective', {})
         if objective.get('contrastive_loss_weight'):

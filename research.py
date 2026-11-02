@@ -74,8 +74,8 @@ def verify_protocol(root=None):
     root = Path(ROOT if root is None else root)
     lock = read_json(root / "protocol.lock.json")
     if set(lock) != {"version", "editable", "editable_config_fields", "fixed_config",
-                     "objective", "fixed_sha256"} or lock["version"] != 18:
-        raise ValueError("Invalid model research protocol; version 18 requires a fresh session/baseline")
+                     "objective", "fixed_sha256"} or lock["version"] != 19:
+        raise ValueError("Invalid model research protocol; version 19 requires a fresh session/baseline")
     if (lock["editable"] != list(EDITABLE) or lock["editable_config_fields"] != list(EDITABLE_CONFIG_FIELDS)
             or lock["objective"] != "minimum_test_mouse_mean_log_loss"):
         raise ValueError("Unsupported research scope or objective")

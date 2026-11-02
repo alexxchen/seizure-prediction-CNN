@@ -19,7 +19,7 @@ from meta_learning import engine
 from meta_learning.algorithms import meta_objective
 from meta_learning.config import Config, TASK_DAYS
 from meta_learning.data import FeatureSplit
-from meta_learning.episodes import episode_batch, episode_from_events, event_sample_weights, query_task_weights, split_episode
+from meta_learning.episodes import episode_batch, episode_from_events, event_sample_weights, split_episode
 from models.normalization import AxisBatchNorm
 
 
@@ -98,6 +98,23 @@ class TinyStore:
         return self.test
 
 
+class MultiMouseStore:
+    def __init__(self):
+        self.pools = {mouse: FeatureSplit.join_development([
+            source_part(mouse, 'train', range(8), events=index + 1),
+            source_part(mouse, 'validation', [8, 11], events=index + 1)])
+            for index, mouse in enumerate(('X1', 'X2'))}
+        self.tests = {mouse: source_part(mouse, 'test', [12, 13]) for mouse in self.pools}
+        self.dataset = type('Dataset', (), dict(signature={'synthetic': 'multiple_mice'}))()
+
+    def load_task_pool(self, mouse, *, crops=False):
+        return self.pools[mouse]
+
+    def load(self, mouse, part):
+        assert part == 'test'
+        return self.tests[mouse]
+
+
 class EventTaskTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -153,8 +170,6 @@ class EventTaskTests(unittest.TestCase):
         b, _ = subset.random_crop_batch(np.arange(len(indices)), rng_b, torch.device('cpu'))
         torch.testing.assert_close(a, b, atol=0, rtol=0)
         self.assertEqual(rng_a.bit_generator.state, rng_b.bit_generator.state)
-        self.assertEqual(query_task_weights({'X1': pool}, {'X1': split_episode(pool, Config(), rng_a)}),
-                         ({'X1': 4}, {'X1': 1.0}))
 
     def config(self):
         return Config(targets=('X1',), outer_steps=2, inner_epochs=2, inner_checkpoint_steps=2,
@@ -162,7 +177,7 @@ class EventTaskTests(unittest.TestCase):
                       query_crops=2, eval_every=1, checkpoint_every=1, classifier_dropout=0.1,
                       support_loss_weight=1, contrastive_loss_weight=0.1, label_smoothing=0)
 
-    def run_training(self, directory, store, *, resume=False, interrupt=False):
+    def run_training(self, directory, store, *, resume=False, interrupt=False, config=None):
         original = engine.progress_event
         def progress(stage, row, **kwargs):
             original(stage, row, **kwargs)
@@ -173,7 +188,75 @@ class EventTaskTests(unittest.TestCase):
                 patch.object(engine, 'source_hashes', return_value={}), \
                 patch.object(engine, 'verify_prepared', return_value={'signature': store.dataset.signature}), \
                 patch.object(engine, 'progress_event', side_effect=progress):
-            return engine.train_run(self.config(), store, directory, '.', torch.device('cpu'), resume)
+            return engine.train_run(config or self.config(), store, directory, '.', torch.device('cpu'), resume)
+
+    def test_uniform_mouse_sampling_with_replacement_and_rng_restore(self):
+        mice = ('X1', 'X2', 'X9', 'X14')
+        rng = np.random.default_rng(27)
+        state = copy.deepcopy(rng.bit_generator.state)
+        draws = [engine.sample_mouse(mice, rng) for _ in range(10000)]
+        rng.bit_generator.state = state
+        self.assertEqual(draws, [engine.sample_mouse(mice, rng) for _ in range(10000)])
+        frequencies = {mouse: sum(m == mouse for m, _ in draws) / len(draws) for mouse in mice}
+        for frequency in frequencies.values():
+            self.assertLess(abs(frequency - 0.25), 0.015)
+        self.assertTrue(any(draws[i][0] == draws[i + 1][0] for i in range(len(draws) - 1)))
+        self.assertTrue(all(info == {'probability': 0.25} for _, info in draws))
+
+    def test_single_mouse_updates_all_mouse_evaluation_and_exact_resume(self):
+        config = replace(self.config(), targets=('X1', 'X2'), outer_steps=6, inner_epochs=1,
+                         batch_size=16, inner_checkpoint_steps=1)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.run_training(root / 'complete', MultiMouseStore(), config=config)
+            with self.assertRaisesRegex(RuntimeError, 'Synthetic interrupt'):
+                self.run_training(root / 'resumed', MultiMouseStore(), config=config, interrupt=True)
+            self.run_training(root / 'resumed', MultiMouseStore(), config=config, resume=True)
+            a = torch.load(root / 'complete/checkpoints/last.pt', weights_only=True)
+            b = torch.load(root / 'resumed/checkpoints/last.pt', weights_only=True)
+            self.assertEqual(a['history'], b['history'])
+            self.assertEqual(a['episode_rng'], b['episode_rng'])
+            self.assertEqual(a['mouse_rng'], b['mouse_rng'])
+            for key in a['model']:
+                torch.testing.assert_close(a['model'][key], b['model'][key], atol=0, rtol=0)
+            for key, state in a['optimizer']['state'].items():
+                self.assertEqual(int(state['step']), config.outer_steps)
+                for name, value in state.items():
+                    torch.testing.assert_close(value, b['optimizer']['state'][key][name], atol=0, rtol=0)
+            self.assertEqual(set(a['selection']['subjects']), set(config.targets))
+            self.assertEqual(set(a['selection']['test']['subjects']), set(config.targets))
+            expected_rng = np.random.default_rng(np.random.SeedSequence([config.seed, 19001]))
+            chosen = []
+            for row in a['history']:
+                self.assertEqual(row['tasks'], 1)
+                self.assertEqual(row['inner']['fixed_epoch_tasks'], 1)
+                self.assertEqual(len(row['mice']), 1)
+                mouse = row['mice'][0]
+                chosen.append(mouse)
+                expected_mouse, info = engine.sample_mouse(config.targets, expected_rng)
+                self.assertEqual(mouse, expected_mouse)
+                self.assertEqual(info, row['mouse_sampling'])
+                self.assertEqual(set(row['query']['subjects']), {mouse})
+                self.assertLessEqual(row['query']['aggregate']['accuracy'], 1)
+                self.assertEqual(set(row['episodes']), set(config.targets))
+                inner = list((root / 'complete/inner' / f"step-{row['step']:06d}").glob('*.json'))
+                self.assertEqual(len(inner), 1)
+                fit = json.loads(inner[0].read_text())
+                self.assertEqual(fit['mouse'], mouse)
+                objective = fit['outer_objective']['total_loss']
+                self.assertAlmostEqual(row['outer_loss'], objective, places=6)
+                self.assertNotIn('outer_weight', fit)
+                self.assertNotIn('outer_task_weights', row)
+                for other in config.targets:
+                    saved = row['episodes'][other]
+                    pool = MultiMouseStore().pools[other]
+                    restored = episode_from_events(pool, saved['support_event_ids'], saved['query_event_ids'])
+                    self.assertEqual(len(restored.query_events), (config.targets.index(other) + 1) * 2)
+                    self.assertFalse(set(restored.query_events) & set(restored.support_events))
+            self.assertEqual(set(chosen), set(config.targets))
+            for mouse in config.targets:
+                partitions = [row['episodes'][mouse]['query_event_ids'] for row in a['history']]
+                self.assertTrue(any(partitions[0] != value for value in partitions[1:]))
 
     def test_checkpointed_pool_training_resume_and_selected_prediction_replay(self):
         with tempfile.TemporaryDirectory() as temporary:

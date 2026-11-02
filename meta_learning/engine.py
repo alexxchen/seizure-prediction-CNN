@@ -19,7 +19,7 @@ from meta_learning.algorithms import meta_objective
 from meta_learning.contrastive import TEMPERATURE
 from meta_learning.common import digest, prediction_metrics, save_checkpoint, seed_everything, write_json, runtime_identity
 from meta_learning.config import Config
-from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch, query_task_weights, episode_from_events
+from meta_learning.episodes import crops_query, crops_support, split_episode, episode_batch, episode_from_events
 from meta_learning.model import MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
@@ -41,9 +41,10 @@ def cpu_state(model):
     return {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
 
 
-def checkpoint(model, optimizer, step, rng, history, selection, identity, elapsed_seconds, peak_vram_mb):
+def checkpoint(model, optimizer, step, rng, mouse_rng, history, selection, identity, elapsed_seconds, peak_vram_mb):
     return dict(model=cpu_state(model), optimizer=optimizer.state_dict(), step=step,
-                episode_rng=rng.bit_generator.state, torch_rng=torch.get_rng_state(),
+                episode_rng=rng.bit_generator.state, mouse_rng=mouse_rng.bit_generator.state,
+                torch_rng=torch.get_rng_state(),
                 cuda_rng=torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
                 python_rng=random.getstate(), history=history, selection=selection, identity=identity,
                 training_wall_seconds=elapsed_seconds, peak_vram_mb=peak_vram_mb)
@@ -63,6 +64,13 @@ def inner_shuffle_rng(seed, device):
 
 def fit_progress(stage, **context):
     return lambda row: progress_event(stage, dict(context, **row))
+
+
+def sample_mouse(mice, rng):
+    """Draw one mouse uniformly with replacement, independently of event/crop RNG."""
+    mouse = mice[int(rng.integers(len(mice)))]
+    probability = 1.0 / len(mice)
+    return mouse, dict(probability=probability)
 
 
 def validation_roles(config):
@@ -179,7 +187,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
     # The preview uses a private RNG; real membership draws use the checkpointed episode RNG.
     preview_rng = np.random.default_rng(config.seed)
     episodes = {mouse: split_episode(training[mouse], config, preview_rng) for mouse in config.targets}
-    query_events, task_weights = query_task_weights(queries, episodes)
+    query_events = {mouse: len(episode.query_events) for mouse, episode in episodes.items()}
     model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size)
     provenance = dict(config=config.to_dict(), source_sha256=source_hashes(),
                       source_inventory_sha256=digest(verify_prepared(prepared_dir)["signature"]),
@@ -214,13 +222,14 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       day_splits=DAY_SPLITS, cnn_input_shape=list(CNN_INPUT_SHAPE),
                       cnn=dict(architecture=repr(model.cnn),
                                parameters=sum(parameter.numel() for parameter in model.cnn.parameters())),
-                      task_schedule=dict(mice="Every configured mouse exactly once per outer step",
-                                         mouse_order=list(config.targets),
-                                         tasks_per_step=len(config.targets),
-                                         episodes="One random event partition per mouse per outer step",
+                      task_schedule=dict(mice="One uniform mouse draw with replacement per outer step",
+                                         mouse_candidates=list(config.targets),
+                                         tasks_per_step=1,
+                                         mouse_rng="Private checkpointed NumPy generator; SeedSequence([seed, 19001])",
+                                         episodes="Original random event partitions for all mice each step; only selected mouse fits for meta training",
                                          task_days=list(config.task_days), query_event_fraction=config.query_event_fraction,
-                                         gradient_reduction="Sum of mouse gradients weighted by eligible query-event counts",
-                                         query_events=query_events, outer_task_weights=task_weights),
+                                         gradient_reduction="Selected mouse's complete loss without cross-mouse event weights or probability correction; equal-mouse target",
+                                         query_events=query_events),
                       normalization=FRONTEND_CONFIG["input_normalization"],
                       batchnorm="Support batch statistics and per-task running EMA; query/test use frozen support EMA; "
                                 "full EMA hypergradient; no final recalibration",
@@ -285,8 +294,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             destination.write_bytes((ROOT / name).read_bytes())
         if source_hashes() != provenance["source_sha256"]:
             raise ValueError("Source files changed while snapshotting")
-    write_json(run_dir / "episodes.json", {mouse: [dict(task.describe(), query_events=query_events[mouse],
-        outer_weight=task_weights[mouse])]
+    write_json(run_dir / "episodes.json", {mouse: [dict(task.describe(), query_events=query_events[mouse])]
         for mouse, task in episodes.items()})
     seed_everything(config.seed)
     if device.type == "cuda":
@@ -300,6 +308,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
               dict(params=[p for p in outer_parameters if id(p) not in decayed], weight_decay=0.0)]
     optimizer = torch.optim.AdamW([group for group in groups if group["params"]], lr=config.outer_lr)
     rng = np.random.default_rng(config.seed)
+    mouse_rng = np.random.default_rng(np.random.SeedSequence([config.seed, 19001]))
     start_step, history, selection, elapsed_seconds, previous_peak = 0, [], None, 0.0, 0.0
     if resume:
         saved = torch.load(run_dir / "checkpoints" / "last.pt", map_location="cpu", weights_only=True)
@@ -310,6 +319,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
         start_step, history, selection = saved["step"], saved["history"], saved["selection"]
         elapsed_seconds, previous_peak = saved["training_wall_seconds"], saved["peak_vram_mb"]
         rng.bit_generator.state = saved["episode_rng"]
+        mouse_rng.bit_generator.state = saved["mouse_rng"]
         torch.set_rng_state(saved["torch_rng"])
         if saved["cuda_rng"]:
             torch.cuda.set_rng_state_all(saved["cuda_rng"])
@@ -325,9 +335,9 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             return selection
     if not resume:
         save_checkpoint(run_dir / "checkpoints" / "last.pt",
-                        checkpoint(model, optimizer, 0, rng, history, selection, identity, 0.0, previous_peak))
-    fit_progress("outer_task_weighting")(dict(query_events=query_events, weights=task_weights,
-        reduction="Query-event-proportional weighted sum; all mice once per outer step"))
+                        checkpoint(model, optimizer, 0, rng, mouse_rng, history, selection, identity, 0.0, previous_peak))
+    fit_progress("outer_task_sampling")(dict(query_events=query_events,
+        reduction="One uniform mouse per step; direct unweighted mouse objective"))
     started = time.monotonic()
     def peak_memory():
         current = torch.cuda.max_memory_allocated(device) / 2**20 if device.type == "cuda" else 0.0
@@ -338,13 +348,15 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             write_json(run_dir / "status.json", dict(status="training", step=step - 1,
                        active_step=step, target_steps=config.outer_steps))
             episodes = {mouse: split_episode(training[mouse], config, rng) for mouse in config.targets}
-            query_events, task_weights = query_task_weights(queries, episodes)
+            query_events = {mouse: len(episode.query_events) for mouse, episode in episodes.items()}
+            selected_mouse, mouse_sampling = sample_mouse(config.targets, mouse_rng)
             write_json(run_dir / "tasks" / f"step-{step:06d}.json",
                        {mouse: task.describe() for mouse, task in episodes.items()})
             optimizer.zero_grad(set_to_none=True)
             losses, inner_reports = [], []
-            for task_index, mouse in enumerate(config.targets):
-                # All tasks see the same frontend; event counts set their gradient coefficients.
+            for mouse in (selected_mouse,):
+                task_index = config.targets.index(mouse)
+                # Only the sampled task fits a CNN and supplies this step's full hypergradient.
                 episode = episodes[mouse]
                 fixed_seed = (None if config.inner_shuffle_seed is None else
                               config.inner_shuffle_seed + task_index)
@@ -373,8 +385,9 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 fit.update(inner_shuffle_seed=fixed_seed, episode=episode.describe())
                 fit.update(mouse=mouse, support_days=list(episode.support_days),
                            query_days=list(episode.query_days), query_samples=len(query[1]),
-                           query_events=query_events[mouse], outer_weight=task_weights[mouse])
-                fit["query"].update(events=query_events[mouse], outer_weight=task_weights[mouse],
+                           query_events=query_events[mouse],
+                           mouse_sampling=mouse_sampling)
+                fit["query"].update(events=query_events[mouse],
                                     days=list(episode.query_days))
                 write_json(run_dir / "inner" / f"step-{step:06d}" / f"task-{task_index:03d}.json", fit)
                 inner_reports.append(fit)
@@ -382,31 +395,29 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                              query_split="query", query_days=list(episode.query_days))(fit["query"])
                 if not torch.isfinite(loss):
                     raise FloatingPointError("Non-finite outer loss")
-                (loss * task_weights[mouse]).backward()
-                losses.append(float(loss.detach()) * task_weights[mouse])
+                loss.backward()
+                losses.append(float(loss.detach()))
                 fit_progress('task_complete')(task_event(step, mouse, fit))
             grad_norm = torch.nn.utils.clip_grad_norm_(outer_parameters, config.gradient_clip, error_if_nonfinite=True)
             optimizer.step()
-            row = dict(step=step, mice=list(config.targets), tasks=len(losses),
-                       query_events=query_events, outer_task_weights=task_weights,
+            row = dict(step=step, mice=[selected_mouse], tasks=len(losses),
+                       mouse_sampling=mouse_sampling,
+                       query_events=query_events,
                        episodes={mouse: task.describe() for mouse, task in episodes.items()},
                        outer_loss=float(sum(losses)), gradient_norm=float(grad_norm))
             objective_subjects = {fit["mouse"]: fit["outer_objective"] for fit in inner_reports}
             row["outer_objective"] = dict(
                 support_loss_weight=config.support_loss_weight, contrastive_loss_weight=config.contrastive_loss_weight,
                 timing="before_outer_update",
-                aggregation="Eligible query-event weighted across mice",
-                aggregate={key: float(sum(task_weights[mouse] * metrics[key]
-                                          for mouse, metrics in objective_subjects.items()))
+                aggregation="Selected mouse objective; no cross-mouse weighting",
+                aggregate={key: float(objective_subjects[selected_mouse][key])
                            for key in ("query_loss", "support_loss_after_last_update",
                                        "weighted_support_loss", "contrastive_loss", "weighted_contrastive_loss", "total_loss")},
                 subjects=objective_subjects)
             subjects = {fit["mouse"]: fit["query"] for fit in inner_reports}
-            aggregate = {key: float(sum(task_weights[mouse] * metrics[key]
-                                       for mouse, metrics in subjects.items()))
-                         for key in ["loss", "accuracy"]}
-            row["query"] = dict(split="query", role="query", days=sorted({day for task in episodes.values() for day in task.query_days}), timing="before_outer_update",
-                                aggregation="Eligible query-event weighted across mice",
+            aggregate = {key: float(subjects[selected_mouse][key]) for key in ["loss", "accuracy"]}
+            row["query"] = dict(split="query", role="query", days=list(episodes[selected_mouse].query_days), timing="before_outer_update",
+                                aggregation="Selected mouse only; unweighted diagnostic",
                                 aggregate=aggregate, subjects=subjects)
             fit_progress("query_step", step=step)(row["query"])
             row["inner"] = dict(epochs_per_task=config.inner_epochs, support_crops=config.support_crops,
@@ -418,7 +429,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                     continue
                 diagnostic_subjects = {fit["mouse"]: fit[f"{role}_crop_validation"] for fit in inner_reports}
                 row[f"{role}_crop_validation"] = dict(timing="before_outer_update",
-                    aggregation="Equal mouse mean; diagnostic only",
+                    aggregation="Selected mouse only; diagnostic only",
                     aggregate={key: float(np.mean([value[key] for value in diagnostic_subjects.values()]))
                                for key in ("loss", "accuracy", "loss_gap", "accuracy_gap")},
                     subjects=diagnostic_subjects)
@@ -466,7 +477,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             history.append(row)
             if step % config.checkpoint_every == 0 or "query_refit" in row:
                 save_checkpoint(run_dir / "checkpoints" / "last.pt",
-                                checkpoint(model, optimizer, step, rng, history, selection, identity,
+                                checkpoint(model, optimizer, step, rng, mouse_rng, history, selection, identity,
                                            elapsed_seconds + time.monotonic() - started, peak_memory()))
             if improved:
                 write_json(run_dir / "selection.json", selection)
