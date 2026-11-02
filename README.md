@@ -4,7 +4,7 @@ Learn a shared waveform frontend for predicting seizure-related labels across re
 
 ## Autoresearch workflow
 
-This branch adapts `seizure-single-channel-auto-research` to shared-frontend meta-learning. Protocol version 19 retains `meta_learning/frontend.py`, `models/cnn.py`, and an explicit optimization-field allowlist in `configs/meta.json`. Both model architectures and their unlearned initialization are editable. The frontend accepts fixed `(N, 28672)` waveforms and declares its positive `(channels, time)` output shape; the candidate CNN consumes that interface and emits two logits. Each candidate still fits a fresh CNN per mouse, and only frontend parameters receive outer updates.
+This branch adapts `seizure-single-channel-auto-research` to shared-frontend meta-learning. Protocol version 20 retains `meta_learning/frontend.py`, `models/cnn.py`, and an explicit optimization-field allowlist in `configs/meta.json`. Both model architectures and their unlearned initialization are editable. The frontend accepts fixed `(N, 28672)` waveforms and declares its positive `(channels, time)` output shape; the candidate CNN consumes that interface and emits two logits. Each candidate still fits a fresh CNN per mouse, and only frontend parameters receive outer updates.
 
 Editable optimization fields are `outer_steps`, `inner_epochs`, `inner_lr`, `inner_weight_decay`, `classifier_dropout`, `outer_lr`, `outer_weight_decay`, `support_loss_weight`, `batch_size`, `frontend_batch_size`, `label_smoothing`, `gradient_clip`, `support_pool_crops`, and `contrastive_loss_weight`. This includes frontend weight decay. The training/solver implementation, data/crops, targets/seeds, evaluation frequency, selection rules, and all other configuration fields remain locked. Inner plain SGD and outer AdamW remain the solver families. `models/normalization.py` owns the locked differentiable support-only BatchNorm implementation; CNNs may use it or stateless normalization, and configured classifier dropout is supported.
 
@@ -61,6 +61,10 @@ python research.py experiment --run-dir autoresearch-runs/local --data-dir /path
 ```
 
 The remaining sections describe the fixed trainer and current model/configuration baseline. Architectural statements describe the baseline and do not restrict subsequent model candidates.
+
+## Evaluation support summary (protocol 20)
+
+EVAL MEAN now prints support accuracy/log loss before query and test. Support uses an equal-mouse mean of the existing final refit support-pool scores, including all pool slots once at the final CNN and support BN state. It is not the final SGD minibatch or fresh-crop diagnostic. Reuse the recorded metrics without any extra inference, fitting, gradient, RNG or statistics changes. Query-only checkpoint selection, test roles, all optimization settings and architecture remain unchanged. Future training requires a fresh v20 session/baseline; active v19 runs keep their saved sources and original logs. The separate read-only `scripts/format_train_log.py` live view can show the added support summary for current/older runs. Editing does not launch or restart training.
 
 ## Single-mouse meta updates (protocol 19)
 

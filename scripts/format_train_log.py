@@ -7,7 +7,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from meta_learning.training_log import readable_lines, task_event, refit_event
+from meta_learning.training_log import readable_lines, task_event, refit_event, evaluation_event
 
 
 def read(path):
@@ -52,7 +52,7 @@ def render(run_dir, output, *, follow=False):
                     emit('evaluation_started', dict(step=step))
                     for mouse in config['targets']:
                         emit('refit_complete', refit_event(step, mouse, reports))
-                    emit('evaluation_step', dict(step=step, **{role: report['aggregate'] for role, report in reports.items()}))
+                    emit('evaluation_step', evaluation_event(step, reports))
                     evaluations_seen.add(step)
                 if step not in steps_seen:
                     emit('outer_step', row)

@@ -24,7 +24,7 @@ from meta_learning.model import MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
 import sample_pipeline
-from meta_learning.training_log import TrainingLog, progress_event, task_event, refit_event
+from meta_learning.training_log import TrainingLog, progress_event, task_event, refit_event, evaluation_event
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -456,8 +456,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 score = report["aggregate"]
                 previous = selection["aggregate"] if selection else None
                 improved = selection_improves(score, previous)
-                fit_progress("evaluation_step", step=step)(
-                    {role: value["aggregate"] for role, value in roles.items()})
+                progress_event("evaluation_step", evaluation_event(step, roles))
                 if improved:
                     fit_progress('checkpoint_selected')(dict(step=step, role=report['role'], loss=score['loss']))
                     directory = run_dir / "selected" / f"step-{step:06d}"
