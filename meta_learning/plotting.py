@@ -107,9 +107,8 @@ def save_convergence_plots(run_dir):
         raise ValueError("Cannot plot an empty training history")
     selection = json.loads((run_dir / "selection.json").read_text())
     config = json.loads((run_dir / "config.json").read_text())
-    split_days = dict(Support=list(range(8)),
-                      Query=config["query_validation_days"],
-                      Valid=config["selection_validation_days"],
+    split_days = dict(Support=config["task_days"],
+                      Query=config["task_days"],
                       Test=selection["test"]["days"])
     rows = accuracy_history(run_dir, history, selection)
     title = ", ".join(sorted(selection.get("subjects", {}))) or run_dir.name

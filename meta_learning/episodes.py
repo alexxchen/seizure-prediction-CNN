@@ -1,12 +1,13 @@
-"""Fixed per-mouse tasks: training support and outer-training query; test is inference only."""
+"""Per-mouse random event tasks on non-test days; test is inference only."""
 
 from dataclasses import dataclass
 import copy
+import math
 
 import numpy as np
 import torch
 
-from source_data import DAY_SPLITS
+from meta_learning.config import TASK_DAYS
 
 
 @dataclass(frozen=True)
@@ -16,31 +17,56 @@ class Episode:
     query_indices: np.ndarray
     support_days: tuple
     query_days: tuple
+    support_events: tuple
+    query_events: tuple
 
     def describe(self):
         return dict(mouse=self.mouse, support_split="support", query_split="query",
                     support_days=list(self.support_days), query_days=list(self.query_days),
-                    support_samples=len(self.support_indices), query_samples=len(self.query_indices))
+                    support_samples=len(self.support_indices), query_samples=len(self.query_indices),
+                    support_event_ids=[list(key) for key in self.support_events],
+                    query_event_ids=[list(key) for key in self.query_events])
 
 
-def split_episode(support, query):
-    """Use the complete official training/validation partitions as one task."""
-    if support.mouse != query.mouse:
-        raise ValueError("Support and query must belong to the same mouse")
-    for values, expected in [(support, "train"), (query, "validation")]:
-        if (values.split != expected or values.table.empty or
-                not values.table.day.isin(DAY_SPLITS[expected]).all()):
-            raise ValueError(f"Expected nonempty {expected} partition with its fixed recording days")
-        if not values.table.mouse.eq(values.mouse).all():
-            raise ValueError("Support and query must belong to the same mouse")
-        if set(values.labels) != {0, 1}:
-            raise ValueError(f"{values.mouse}: {expected} partition needs both classes")
-    support_days = tuple(sorted(int(day) for day in support.table.day.unique()))
-    query_days = tuple(sorted(int(day) for day in query.table.day.unique()))
-    if max(support_days) >= min(query_days):
-        raise ValueError("Support days must precede query days")
-    return Episode(support.mouse, np.arange(len(support.labels)), np.arange(len(query.labels)),
-                   support_days, query_days)
+def event_groups(pool):
+    """An event includes all positive windows and its matched negative-row budgets."""
+    if (pool.split != "development" or pool.table.empty or
+            not pool.table.mouse.eq(pool.mouse).all() or not pool.table.day.isin(TASK_DAYS).all()):
+        raise ValueError("Event tasks require one mouse's non-test development pool")
+    groups = pool.table.groupby(["day", "event_index"], sort=True).indices
+    if any(set(pool.labels[indices]) != {0, 1} for indices in groups.values()):
+        raise ValueError("Each event needs positive windows and matched negatives")
+    return {tuple(map(int, key)): indices for key, indices in groups.items()}
+
+
+def episode_from_events(pool, support_events, query_events):
+    """Restore a complete, disjoint event partition without drawing random numbers."""
+    groups = event_groups(pool)
+    support_events = tuple(sorted(tuple(map(int, key)) for key in support_events))
+    query_events = tuple(sorted(tuple(map(int, key)) for key in query_events))
+    support_set, query_set = set(support_events), set(query_events)
+    if (not support_set or not query_set or support_set & query_set or
+            len(support_set) != len(support_events) or len(query_set) != len(query_events) or
+            support_set | query_set != set(groups)):
+        raise ValueError("Support/query must partition every eligible event exactly once")
+    indices = lambda keys: np.sort(np.concatenate([groups[key] for key in keys]))
+    return Episode(pool.mouse, indices(support_events), indices(query_events),
+                   tuple(sorted({key[0] for key in support_events})),
+                   tuple(sorted({key[0] for key in query_events})), support_events, query_events)
+
+
+def split_episode(pool, config, rng):
+    """Redraw event membership each outer step; event counts stay fixed per mouse."""
+    if not pool.table.day.isin(config.task_days).all():
+        raise ValueError("Task pool crossed configured task_days")
+    groups = event_groups(pool)
+    keys = tuple(groups)
+    if len(keys) < 2:
+        raise ValueError("Random event tasks require at least two eligible events")
+    count = min(len(keys) - 1, max(1, math.ceil(len(keys) * config.query_event_fraction)))
+    selected = set(rng.choice(len(keys), size=count, replace=False).tolist())
+    return episode_from_events(pool, [key for i, key in enumerate(keys) if i not in selected],
+                               [key for i, key in enumerate(keys) if i in selected])
 
 
 def balanced_indices(labels, available, per_class, rng):
@@ -95,8 +121,9 @@ class SupportPool:
     """One legal crop pool per fit, with event/class-balanced epoch selections."""
 
     def __init__(self, split, indices, config, rng):
-        if split.split != "train" or not split.table.day.between(0, 7).all():
-            raise ValueError("Support crop pools require training Days 0-7")
+        event_groups(split)
+        if not split.table.day.isin(config.task_days).all():
+            raise ValueError("Support crop pools require non-test task days")
         self.split, self.config, self.rng = split, config, rng
         self.indices = event_crop_indices(split, indices, config.support_pool_crops)
         self.labels = split.labels[self.indices]
@@ -152,26 +179,6 @@ def event_sample_weights(split, indices, device):
     rows = split.table.iloc[indices]
     counts = rows.groupby(["mouse", "day", "event_index"], sort=False).label.transform("size")
     return torch.as_tensor(1.0 / counts.to_numpy(dtype=np.float32), device=device)
-
-
-def query_task_weights(queries, episodes):
-    """Weight fixed mouse tasks by independent eligible query events, before crops/caps."""
-    counts = {}
-    for mouse, episode in episodes.items():
-        query = queries[mouse]
-        rows = query.table.iloc[episode.query_indices]
-        if (query.split != "validation" or not rows.mouse.eq(mouse).all()
-                or not rows.day.isin(episode.query_days).all()):
-            raise ValueError("Outer weights require the task's query partition")
-        positives = rows[rows.label == 1]
-        count = len(positives.drop_duplicates(["mouse", "day", "event_index"]))
-        if not count:
-            raise ValueError(f"{mouse}: outer weighting requires positive query events")
-        counts[mouse] = count
-    total = sum(counts.values())
-    if not total:
-        raise ValueError("Outer weighting requires at least one query task")
-    return counts, {mouse: count / total for mouse, count in counts.items()}
 
 
 def episode_batch(support_split, query_split, episode, config, rng, device):

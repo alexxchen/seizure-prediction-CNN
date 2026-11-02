@@ -154,7 +154,7 @@ def main(args):
     from meta_learning.common import digest, resolve_device, seed_everything
     from meta_learning.config import Config
     from meta_learning.data import DataStore
-    from meta_learning.engine import validation_roles
+    from meta_learning.episodes import episode_from_events
     from meta_learning.model import MetaModel
 
     if selection["identity"] != metadata["identity"]:
@@ -172,7 +172,6 @@ def main(args):
     store = DataStore(args.prepared_dir, args.data_dir, args.cache_dir, output / "data")
     if digest(store.dataset.signature) != metadata["provenance"]["source_inventory_sha256"]:
         raise ValueError("Source inventory differs from training")
-    roles = [("support", "train", tuple(range(8))), *validation_roles(config)]
     tables, reports = {}, {}
     tracked = {str(run_dir / name): file_hash(run_dir / name) for name in ("run.json", "selection.json")}
     for mouse in targets:
@@ -189,14 +188,17 @@ def main(args):
             model = MetaModel(cnn_seed=config.seed, frontend_batch_size=config.frontend_batch_size)
         model.load_state_dict(state["model"], strict=True)
         model.to(device).requires_grad_(False)
+        pool = store.load_task_pool(mouse).subset_days(config.task_days)
+        if pool.fingerprint != state["development_fingerprint"]:
+            raise ValueError(f"{mouse}: development sample provenance changed")
+        episode = episode_from_events(pool, state["episode"]["support_event_ids"],
+                                       state["episode"]["query_event_ids"])
+        roles = [("support", pool.subset_indices(episode.support_indices)),
+                 ("query", pool.subset_indices(episode.query_indices)), ("test", store.load(mouse, "test"))]
         rows, arrays, checks = [], [], {}
-        for role, part, days in roles:
-            values = store.load(mouse, part)
-            key = "training_fingerprint" if part == "train" else f"{part}_fingerprint"
+        for role, values in roles:
+            key = "training_fingerprint" if role == "support" else f"{role}_fingerprint"
             if values.fingerprint != state[key]:
-                raise ValueError(f"{mouse}: {part} sample provenance changed")
-            values = values.subset_days(days) if days is not None else values
-            if role != "support" and values.fingerprint != state[f"{role}_fingerprint"]:
                 raise ValueError(f"{mouse}: {role} sample provenance changed")
             features, probabilities = extract(model, values, config.batch_size, device)
             table = annotate(values.table, probabilities)

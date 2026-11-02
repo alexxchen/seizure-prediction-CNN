@@ -39,7 +39,7 @@ def duration(seconds):
 def task_event(step, mouse, fit, **extra):
     return dict(step=step, mouse=mouse, support=fit_metrics(fit),
                 support_new=fit.get('support_crop_validation'), query=fit.get('query'),
-                query_new=fit.get('query_crop_validation'), **extra)
+                query_new=fit.get('query_crop_validation'), objective=fit.get('outer_objective'), **extra)
 
 
 def refit_event(step, mouse, reports):
@@ -62,9 +62,13 @@ def readable_lines(stage, row, total=None):
         return [
             f"Meta training | {config['outer_steps']} outer steps x {config['inner_epochs']} inner epochs | {row['device']}",
             f"Mice: {', '.join(config['targets'])} | support pool/draw: {config['support_pool_crops']}/{config['support_crops']} per event/class | query crops: {config['query_crops']}",
+            (f"Tasks: random whole events from Days {config['task_days']} each outer step | query fraction {config['query_event_fraction']:g} | validation=query"
+             if 'task_days' in config else 'Tasks: see the saved run provenance.'),
             f"SGD lr={config['inner_lr']:g}, decay={config['inner_weight_decay']:g} | AdamW lr={config['outer_lr']:g}, decay={config['outer_weight_decay']:g} | dropout={config['classifier_dropout']:g} | support weight={config['support_loss_weight']:g}",
+            f"Supervised frontend contrastive weight={config.get('contrastive_loss_weight', 0):g}",
             'Values are accuracy / loss. S=support, Q=query, -> new=independent crop draw.',
-            'Task rows: final fitted CNN. MEAN: equal mouse mean. Objective: query-event-weighted outer loss.',
+            'Sampling: one uniform mouse with replacement per step; unweighted mouse objective.',
+            'Task/STEP rows: selected mouse only. EVAL MEAN: equal mean over every configured mouse.',
             'Gaps are fitted accuracy minus new-crop accuracy, in percentage points (pp).',
             'EVAL: fresh support-only CNN refits; Q uses fixed windows; test never selects checkpoints.',
             f"Support summary: {row['support_scope']}",
@@ -77,6 +81,9 @@ def readable_lines(stage, row, total=None):
             line += f" | valid {metric(row['valid'])}"
         if 'test' in row:
             line += f" | test {metric(row['test'])}"
+        objective = row.get('objective') or {}
+        if objective.get('contrastive_loss_weight'):
+            line += f" | contrast {objective['contrastive_loss']:.4f} x {objective['contrastive_loss_weight']:g} = {objective['weighted_contrastive_loss']:.4f}"
         return [line]
     if stage == 'outer_step':
         support_diagnostics = row.get('support_crop_validation', {}).get('subjects', {})
@@ -85,8 +92,12 @@ def readable_lines(stage, row, total=None):
         query = average(row['query'].get('subjects', {}).values())
         new_support = average(support_diagnostics.values())
         new_query = average(row.get('query_crop_validation', {}).get('subjects', {}).values())
-        lines = [f"{prefix} MEAN     | S {metric(support)} -> new {metric(new_support)} | Q {metric(query)} -> new {metric(new_query)}"]
+        summary = f"STEP {row['mice'][0]}" if len(row['mice']) == 1 else 'MEAN'
+        lines = [f"{prefix} {summary:<8} | S {metric(support)} -> new {metric(new_support)} | Q {metric(query)} -> new {metric(new_query)}"]
         parts = [f"objective={row['outer_loss']:.4f}"]
+        objective = row.get('outer_objective', {})
+        if objective.get('contrastive_loss_weight'):
+            parts.append(f"contrast={objective['aggregate']['weighted_contrastive_loss']:.4f}")
         if support and new_support:
             parts.append(f"S gap {(support['accuracy'] - new_support['accuracy']) * 100:+.2f}pp")
         if query and new_query:

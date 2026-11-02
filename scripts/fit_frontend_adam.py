@@ -156,14 +156,14 @@ def main(args):
     from meta_learning.config import Config
     from meta_learning.data import DataStore
     from meta_learning.engine import runtime_identity
-    from meta_learning.episodes import crops_support
+    from meta_learning.episodes import crops_support, episode_from_events
     from meta_learning.model import MetaModel
     from source_data import TARGETS
 
     config = Config.from_dict(metadata["provenance"]["config"])
-    targets = args.targets.split(",") if args.targets else list(TARGETS)
-    if not targets or len(set(targets)) != len(targets) or set(targets) - set(TARGETS):
-        raise ValueError("Choose distinct supported mice")
+    targets = args.targets.split(",") if args.targets else list(config.targets)
+    if not targets or len(set(targets)) != len(targets) or set(targets) - set(selection["adapted_models"]):
+        raise ValueError("Choose distinct mice with selected adapted checkpoints")
     device = resolve_device(args.device)
     runtime = runtime_identity(device)
     if runtime["packages"] != metadata["provenance"]["runtime"]["packages"]:
@@ -175,12 +175,14 @@ def main(args):
         raise ValueError("Frontend checkpoint identity mismatch")
     tracked = {str(source_run / name): file_hash(source_run / name) for name in ("run.json", "selection.json")}
     tracked[str(frontend_path)] = file_hash(frontend_path)
+    source_states = {}
     for mouse in targets:
         record = selection["adapted_models"][mouse]
         path = source_run / record["path"]
         if file_hash(path) != record["sha256"]:
             raise ValueError(f"Source checkpoint changed: {mouse}")
         archived = torch.load(path, weights_only=True, map_location="cpu")
+        source_states[mouse] = archived
         if archived["identity"] != metadata["identity"] or archived["mouse"] != mouse:
             raise ValueError("Source adapted checkpoint identity mismatch")
         attached = {key.removeprefix("frontend."): value for key, value in archived["model"].items()
@@ -191,10 +193,11 @@ def main(args):
         tracked[str(path)] = record["sha256"]
     experiment = dict(source_identity=metadata["identity"], source_step=selection["step"],
                       input_sha256=tracked, targets=targets, epochs=args.epochs, optimizer="adam", lr=args.lr,
-                      source_config=config.to_dict(), validation_days=[8, 11], test_days=[12, 13],
+                      source_config=config.to_dict(),
+                      event_partitions={mouse: source_states[mouse]["episode"] for mouse in targets}, test_days=[12, 13],
                       selection="Per-mouse minimum validation log loss across all completed epochs",
-                      validation_scope="Days 8/11 already supervised the source frontend; reused for CNN epoch selection",
-                      batchnorm="Train EMA; each candidate calibrated on support only, without changing training EMA",
+                      validation_scope="Selected query events already supervised the source frontend; reused for CNN epoch selection",
+                      batchnorm="Support-only training EMA; no final recalibration",
                       script_sha256=file_hash(__file__), runtime=runtime)
     identity = digest(experiment)
     if args.resume:
@@ -230,13 +233,14 @@ def main(args):
         model.frontend.load_state_dict(frontend_state["frontend"], strict=True)
         model.to(device).eval()
         model.frontend.requires_grad_(False)
-        training = store.load_crops(mouse, "train") if crops_support(config) else store.load(mouse, "train")
-        if not training.table.day.between(0, 7).all():
-            raise ValueError("CNN training must use Days 0-7 only")
-        if training.fingerprint != metadata["provenance"]["training_fingerprints"][mouse]:
+        pool = store.load_task_pool(mouse, crops=crops_support(config)).subset_days(config.task_days)
+        saved = source_states[mouse]
+        episode = episode_from_events(pool, saved["episode"]["support_event_ids"], saved["episode"]["query_event_ids"])
+        training = pool.subset_indices(episode.support_indices)
+        if training.fingerprint != saved["training_fingerprint"]:
             raise ValueError("Support sample fingerprint changed")
-        validation = store.load(mouse, "validation").subset_days((8, 11))
-        if validation.fingerprint != metadata["provenance"]["query_fingerprints"][mouse]:
+        validation = store.load_task_pool(mouse).subset_days(config.task_days).subset_indices(episode.query_indices)
+        if validation.fingerprint != saved["query_fingerprint"]:
             raise ValueError("Validation sample fingerprint changed")
         print(f"{mouse}: encoding seeded support crops and fixed validation windows", flush=True)
         features, labels = support_features(model, training, config, np.random.default_rng(seed), device)
@@ -309,8 +313,8 @@ def main(args):
                   completed_utc=datetime.now(timezone.utc).isoformat())
     write_json(output / "report.json", report)
     lines = ["# Frozen meta frontend: Adam personalization", "",
-             "Days 0-7 train each fresh CNN. All requested epochs complete; minimum Days 8/11 log loss selects each CNN.",
-             "Days 8/11 previously supervised the source frontend. Days 12/13 are inference only after selection.", "",
+             "The saved support events train each fresh CNN. All requested epochs complete; saved query-event log loss selects each CNN.",
+             "Query events previously supervised the source frontend. Days 12/13 are inference only after selection.", "",
              "| Mouse | Selected epoch | Val loss | Val accuracy | Test loss | Test accuracy | Test AUC |",
              "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for mouse, row in subjects.items():

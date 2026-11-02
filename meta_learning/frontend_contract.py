@@ -12,12 +12,15 @@ INPUT_SAMPLES = 28672
 CNN_INPUT_SHAPE = tuple(WaveformFrontend.output_shape)
 if len(CNN_INPUT_SHAPE) != 2 or any(type(value) is not int or value < 1 for value in CNN_INPUT_SHAPE):
     raise ValueError("WaveformFrontend.output_shape must declare positive integer (channels, time) dimensions")
+if type(WaveformFrontend.projection_dim) is not int or WaveformFrontend.projection_dim < 1:
+    raise ValueError("WaveformFrontend.projection_dim must declare a positive integer")
 
 
 class Frontend(nn.Module):
     """Own initialization, chunking, and replay independently of candidate internals."""
 
     output_shape = CNN_INPUT_SHAPE
+    projection_dim = WaveformFrontend.projection_dim
 
     def __init__(self, seed=0, batch_size=32):
         super().__init__()
@@ -52,6 +55,22 @@ class Frontend(nn.Module):
 
     def decay_parameters(self):
         return [parameter for parameter in self.parameters() if parameter.ndim > 1]
+
+    def _project_batch(self, features):
+        projected = self.network.project(features)
+        if projected.shape != (len(features), self.projection_dim):
+            raise ValueError(f"Frontend projection must emit (N, {self.projection_dim})")
+        return projected
+
+    def project(self, features):
+        """Apply the candidate's sample-local projection to cached features; never encode waveforms again."""
+        if features.ndim != 3 or features.shape[1:] != CNN_INPUT_SHAPE or not len(features):
+            raise ValueError(f"Expected nonempty frontend features shaped (N, {CNN_INPUT_SHAPE})")
+        differentiable = torch.is_grad_enabled() and (
+            features.requires_grad or any(parameter.requires_grad for parameter in self.parameters()))
+        return torch.cat([checkpoint(self._project_batch, batch, use_reentrant=False, preserve_rng_state=True)
+                          if differentiable else self._project_batch(batch)
+                          for batch in features.split(self.batch_size)])
 
     def describe(self):
         return dict(FRONTEND_CONFIG, checkpoint_batch_size=self.batch_size,
@@ -92,29 +111,41 @@ def check_candidate(device="cpu"):
         state = {name: value.detach().clone() for name, value in frontend.state_dict().items()}
         x = torch.randn(2, INPUT_SAMPLES, device=device)
         mode_features = None
+        mode_projection = None
         for training in (True, False):
             frontend.train(training)
             rng_before = torch.get_rng_state().clone()
             device_rng_before = torch.cuda.get_rng_state_all() if devices else []
             with torch.no_grad():
                 together = frontend(x)
+                projection = frontend.project(together)
                 frontend.batch_size = 1
                 alone = frontend(x)
+                projection_alone = frontend.project(alone)
                 frontend.batch_size = 2
                 changed = frontend(torch.stack((x[0], x[1] * 7 + 3)))
+                projection_changed = frontend.project(changed)
                 silent = frontend(torch.zeros_like(x[:1]))
+                projection_silent = frontend.project(silent)
             if not torch.equal(rng_before, torch.get_rng_state()) or any(
                     not torch.equal(a, b) for a, b in zip(
                         device_rng_before, torch.cuda.get_rng_state_all() if devices else [])):
                 raise ValueError("Frontend forward consumed random numbers")
-            if not all(torch.isfinite(v).all() for v in (together, alone, changed, silent)):
+            if not all(torch.isfinite(v).all() for v in (
+                    together, alone, changed, silent, projection, projection_alone, projection_changed, projection_silent)):
                 raise ValueError("Frontend emitted non-finite features")
             if not torch.allclose(together, alone, atol=2e-5, rtol=2e-4) or not torch.allclose(
                     together[:1], changed[:1], atol=2e-5, rtol=2e-4):
                 raise ValueError("Frontend features depend on other samples or chunk size")
+            if not torch.allclose(projection, projection_alone, atol=2e-5, rtol=2e-4) or not torch.allclose(
+                    projection[:1], projection_changed[:1], atol=2e-5, rtol=2e-4):
+                raise ValueError("Frontend projection depends on other samples or chunk size")
             if mode_features is not None and not torch.allclose(together, mode_features, atol=2e-5, rtol=2e-4):
                 raise ValueError("Frontend features differ between training and evaluation")
+            if mode_projection is not None and not torch.allclose(projection, mode_projection, atol=2e-5, rtol=2e-4):
+                raise ValueError("Frontend projection differs between training and evaluation")
             mode_features = together
+            mode_projection = projection
             if any(not torch.equal(value, frontend.state_dict()[name]) for name, value in state.items()):
                 raise ValueError("Frontend mutated persistent state during inference")
         frontend.train()
@@ -150,10 +181,11 @@ def check_candidate(device="cpu"):
         if any(not torch.equal(value, model.cnn.state_dict()[name]) for name, value in reference_state.items()):
             raise ValueError("CNN evaluation or fitting mutated its unlearned reference state")
         return dict(input_samples=INPUT_SAMPLES, output_shape=list(CNN_INPUT_SHAPE),
+                    projection_dim=frontend.projection_dim,
                     parameters=sum(p.numel() for p in frontend.parameters()),
                     cnn_parameters=sum(p.numel() for p in model.cnn.parameters()), device=str(device),
-                    coverage="Synthetic shape, initialization RNG, chunk/sample isolation, state, silence, "
-                             "frontend gradients, CNN logits and checkpointed query plus final-support hypergradients")
+                    coverage="Synthetic feature/projection shapes, initialization RNG, chunk/sample isolation, state, silence, "
+                             "frontend gradients, CNN logits and checkpointed query, final-support and supervised contrastive hypergradients")
 
 
 if __name__ == "__main__":
