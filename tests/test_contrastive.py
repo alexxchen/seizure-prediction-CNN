@@ -198,7 +198,7 @@ class ContrastiveTests(unittest.TestCase):
         loss, report = supervised_contrastive_loss(projected, torch.tensor([0, 0, 1, 1]))
         projection_parameters = tuple(frontend.network.projection_head.parameters())
         self.assertEqual(sum(parameter.numel() for parameter in projection_parameters), 2112)
-        self.assertEqual(sum(parameter.numel() for parameter in frontend.parameters()), 45232)
+        self.assertEqual(sum(parameter.numel() for parameter in frontend.parameters()), 170240)
         gradients = torch.autograd.grad(loss, (features, *projection_parameters))
         self.assertTrue(all(torch.isfinite(value).all() and value.abs().sum() > 0 for value in gradients))
         torch.testing.assert_close(gradients[0], gradients[0][:, :, :1].expand_as(gradients[0]))
