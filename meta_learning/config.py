@@ -23,6 +23,9 @@ class Config:
     inner_weight_decay: float = 0.0
     classifier_dropout: float = 0.0
     outer_lr: float = 0.001
+    outer_lr_scheduler: str = "cosine"
+    outer_lr_warmup_steps: int = 0
+    outer_lr_min_ratio: float = 0.1
     outer_weight_decay: float = 0.0
     support_loss_weight: float = 0.1
     contrastive_loss_weight: float = 0.0
@@ -52,6 +55,16 @@ class Config:
             raise ValueError("Step counts and sample counts must be positive integers")
         if type(self.seed) is not int or self.seed < 0:
             raise ValueError("Invalid seed")
+        if type(self.outer_lr_scheduler) is not str or self.outer_lr_scheduler not in {"none", "cosine"}:
+            raise ValueError("outer_lr_scheduler must be none or cosine")
+        if (type(self.outer_lr_warmup_steps) is not int or
+                not 0 <= self.outer_lr_warmup_steps < self.outer_steps):
+            raise ValueError("outer_lr_warmup_steps must be an integer in [0, outer_steps)")
+        if self.outer_lr_scheduler == "none" and self.outer_lr_warmup_steps:
+            raise ValueError("outer_lr_warmup_steps requires the cosine scheduler")
+        if (type(self.outer_lr_min_ratio) not in {float, int} or
+                not math.isfinite(self.outer_lr_min_ratio) or not 0 <= self.outer_lr_min_ratio <= 1):
+            raise ValueError("outer_lr_min_ratio must be finite and in [0, 1]")
         if type(self.inner_checkpoint_steps) is not int or self.inner_checkpoint_steps < 0:
             raise ValueError("inner_checkpoint_steps must be a nonnegative integer")
         if type(self.inner_log_every) is not int or self.inner_log_every < 0:

@@ -232,7 +232,8 @@ class EventTaskTests(unittest.TestCase):
 
     def test_single_mouse_updates_all_mouse_evaluation_and_exact_resume(self):
         config = replace(self.config(), targets=('X1', 'X2'), outer_steps=6, inner_epochs=1,
-                         batch_size=16, inner_checkpoint_steps=1)
+                         batch_size=16, inner_checkpoint_steps=1,
+                         outer_lr_scheduler='cosine', outer_lr_warmup_steps=2)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.run_training(root / 'complete', MultiMouseStore(), config=config)
@@ -244,6 +245,10 @@ class EventTaskTests(unittest.TestCase):
             self.assertEqual(a['history'], b['history'])
             self.assertEqual(a['episode_rng'], b['episode_rng'])
             self.assertEqual(a['mouse_rng'], b['mouse_rng'])
+            self.assertEqual(a['outer_scheduler'], b['outer_scheduler'])
+            self.assertEqual(a['outer_scheduler']['last_epoch'], config.outer_steps)
+            self.assertEqual(a['history'][0]['outer_lr'], config.outer_lr / 2)
+            self.assertAlmostEqual(a['history'][-1]['next_outer_lr'], config.outer_lr * config.outer_lr_min_ratio)
             for key in a['model']:
                 torch.testing.assert_close(a['model'][key], b['model'][key], atol=0, rtol=0)
             for key, state in a['optimizer']['state'].items():

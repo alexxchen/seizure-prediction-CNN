@@ -24,7 +24,7 @@ from meta_learning.model import MetaModel
 from prepare import verify_prepared
 from source_data import DAY_SPLITS, file_hash
 import sample_pipeline
-from meta_learning.training_log import TrainingLog, progress_event, task_event, refit_event
+from meta_learning.training_log import TrainingLog, progress_event, task_event, refit_event, evaluation_event
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -41,8 +41,9 @@ def cpu_state(model):
     return {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
 
 
-def checkpoint(model, optimizer, step, rng, mouse_rng, history, selection, identity, elapsed_seconds, peak_vram_mb):
+def checkpoint(model, optimizer, scheduler, step, rng, mouse_rng, history, selection, identity, elapsed_seconds, peak_vram_mb):
     return dict(model=cpu_state(model), optimizer=optimizer.state_dict(), step=step,
+                outer_scheduler=scheduler.state_dict() if scheduler is not None else None,
                 episode_rng=rng.bit_generator.state, mouse_rng=mouse_rng.bit_generator.state,
                 torch_rng=torch.get_rng_state(),
                 cuda_rng=torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
@@ -71,6 +72,21 @@ def sample_mouse(mice, rng):
     mouse = mice[int(rng.integers(len(mice)))]
     probability = 1.0 / len(mice)
     return mouse, dict(probability=probability)
+
+
+def outer_lr_multiplier(config, completed_steps):
+    """Step-count-only warmup/cosine factor; the post-final factor is min_ratio."""
+    warmup = config.outer_lr_warmup_steps
+    if completed_steps < warmup:
+        return (completed_steps + 1) / warmup
+    progress = min(1.0, max(0.0, (completed_steps - warmup) / (config.outer_steps - warmup)))
+    return config.outer_lr_min_ratio + (1 - config.outer_lr_min_ratio) * (1 + math.cos(math.pi * progress)) / 2
+
+
+def build_outer_scheduler(optimizer, config):
+    if config.outer_lr_scheduler == "none":
+        return None
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda completed: outer_lr_multiplier(config, completed))
 
 
 def validation_roles(config):
@@ -200,6 +216,10 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                       selection_criterion=selection_criterion(config),
                       outer_optimizer=(f"AdamW lr {config.outer_lr}; decoupled weight decay {config.outer_weight_decay} "
                                        "on frontend weight matrices; frontend biases and normalization parameters undecayed"),
+                      outer_schedule=dict(kind=config.outer_lr_scheduler, warmup_steps=config.outer_lr_warmup_steps,
+                                          min_ratio=config.outer_lr_min_ratio,
+                                          timing="Advance after each frontend optimizer update; step-count-only, no metric input",
+                                          endpoint="Minimum LR is reached after the last update; history records the LR used and next LR"),
                       outer_objective=dict(formula="query_loss + support_loss_weight * support_loss_after_last_update + contrastive_loss_weight * contrastive_loss",
                                            support_loss_weight=config.support_loss_weight,
                                            contrastive_loss_weight=config.contrastive_loss_weight,
@@ -307,6 +327,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
     groups = [dict(params=[p for p in outer_parameters if id(p) in decayed], weight_decay=config.outer_weight_decay),
               dict(params=[p for p in outer_parameters if id(p) not in decayed], weight_decay=0.0)]
     optimizer = torch.optim.AdamW([group for group in groups if group["params"]], lr=config.outer_lr)
+    scheduler = build_outer_scheduler(optimizer, config)
     rng = np.random.default_rng(config.seed)
     mouse_rng = np.random.default_rng(np.random.SeedSequence([config.seed, 19001]))
     start_step, history, selection, elapsed_seconds, previous_peak = 0, [], None, 0.0, 0.0
@@ -315,6 +336,8 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
         if saved["identity"] != identity:
             raise ValueError("Checkpoint belongs to another run")
         model.load_state_dict(saved["model"])
+        if scheduler is not None:
+            scheduler.load_state_dict(saved["outer_scheduler"])
         optimizer.load_state_dict(saved["optimizer"])
         start_step, history, selection = saved["step"], saved["history"], saved["selection"]
         elapsed_seconds, previous_peak = saved["training_wall_seconds"], saved["peak_vram_mb"]
@@ -335,7 +358,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             return selection
     if not resume:
         save_checkpoint(run_dir / "checkpoints" / "last.pt",
-                        checkpoint(model, optimizer, 0, rng, mouse_rng, history, selection, identity, 0.0, previous_peak))
+                        checkpoint(model, optimizer, scheduler, 0, rng, mouse_rng, history, selection, identity, 0.0, previous_peak))
     fit_progress("outer_task_sampling")(dict(query_events=query_events,
         reduction="One uniform mouse per step; direct unweighted mouse objective"))
     started = time.monotonic()
@@ -345,6 +368,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
     try:
         for step in range(start_step + 1, config.outer_steps + 1):
             step_started = time.monotonic()
+            step_lr = optimizer.param_groups[0]["lr"]
             write_json(run_dir / "status.json", dict(status="training", step=step - 1,
                        active_step=step, target_steps=config.outer_steps))
             episodes = {mouse: split_episode(training[mouse], config, rng) for mouse in config.targets}
@@ -400,7 +424,10 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 fit_progress('task_complete')(task_event(step, mouse, fit))
             grad_norm = torch.nn.utils.clip_grad_norm_(outer_parameters, config.gradient_clip, error_if_nonfinite=True)
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
             row = dict(step=step, mice=[selected_mouse], tasks=len(losses),
+                       outer_lr=step_lr, next_outer_lr=optimizer.param_groups[0]["lr"],
                        mouse_sampling=mouse_sampling,
                        query_events=query_events,
                        episodes={mouse: task.describe() for mouse, task in episodes.items()},
@@ -456,8 +483,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
                 score = report["aggregate"]
                 previous = selection["aggregate"] if selection else None
                 improved = selection_improves(score, previous)
-                fit_progress("evaluation_step", step=step)(
-                    {role: value["aggregate"] for role, value in roles.items()})
+                progress_event("evaluation_step", evaluation_event(step, roles))
                 if improved:
                     fit_progress('checkpoint_selected')(dict(step=step, role=report['role'], loss=score['loss']))
                     directory = run_dir / "selected" / f"step-{step:06d}"
@@ -477,7 +503,7 @@ def _train_run(config, store, run_dir, prepared_dir, device, resume=False):
             history.append(row)
             if step % config.checkpoint_every == 0 or "query_refit" in row:
                 save_checkpoint(run_dir / "checkpoints" / "last.pt",
-                                checkpoint(model, optimizer, step, rng, mouse_rng, history, selection, identity,
+                                checkpoint(model, optimizer, scheduler, step, rng, mouse_rng, history, selection, identity,
                                            elapsed_seconds + time.monotonic() - started, peak_memory()))
             if improved:
                 write_json(run_dir / "selection.json", selection)
