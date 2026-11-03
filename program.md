@@ -20,7 +20,7 @@ Once the user has requested the study, kick off the experimentation. Editing thi
 
 ## Experimentation
 
-Each experiment runs on a single GPU. The training script completes the **declared budget in `configs/meta.json`** (`outer_steps` and `inner_epochs`). You launch it simply as: `.\run_research.ps1 experiment --timeout-seconds 172800 --description "your idea"`. On Linux, use `./run_research.sh` with the same arguments.
+Each experiment runs on a single GPU. The training script completes the **declared budget in `configs/meta.json`** (`outer_steps` and `inner_epochs`). Optional outer scheduling is controlled by `outer_lr_scheduler`, `outer_lr_warmup_steps`, and `outer_lr_min_ratio`; it depends only on update count and resumes from checkpoint state. You launch it simply as: `.\run_research.ps1 experiment --timeout-seconds 172800 --description "your idea"`. On Linux, use `./run_research.sh` with the same arguments.
 
 **What you CAN do:**
 - Modify `meta_learning/frontend.py` and `models/cnn.py` — model architecture, initialization, and waveform transforms, within the interfaces and model constraints in `AGENTS.md`.

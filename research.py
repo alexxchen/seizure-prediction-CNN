@@ -21,6 +21,7 @@ EDITABLE_CONFIG_FIELDS = (
     "outer_steps", "inner_epochs", "inner_lr", "inner_weight_decay", "classifier_dropout",
     "outer_lr", "outer_weight_decay", "support_loss_weight", "batch_size", "frontend_batch_size",
     "label_smoothing", "gradient_clip", "support_pool_crops", "contrastive_loss_weight",
+    "outer_lr_scheduler", "outer_lr_warmup_steps", "outer_lr_min_ratio",
 )
 
 
@@ -74,8 +75,8 @@ def verify_protocol(root=None):
     root = Path(ROOT if root is None else root)
     lock = read_json(root / "protocol.lock.json")
     if set(lock) != {"version", "editable", "editable_config_fields", "fixed_config",
-                     "objective", "fixed_sha256"} or lock["version"] != 20:
-        raise ValueError("Invalid model research protocol; version 20 requires a fresh session/baseline")
+                     "objective", "fixed_sha256"} or lock["version"] != 21:
+        raise ValueError("Invalid model research protocol; version 21 requires a fresh session/baseline")
     if (lock["editable"] != list(EDITABLE) or lock["editable_config_fields"] != list(EDITABLE_CONFIG_FIELDS)
             or lock["objective"] != "minimum_test_mouse_mean_log_loss"):
         raise ValueError("Unsupported research scope or objective")

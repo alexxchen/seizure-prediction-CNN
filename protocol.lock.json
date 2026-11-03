@@ -1,5 +1,5 @@
 {
-  "version": 20,
+  "version": 21,
   "editable": [
     "meta_learning/frontend.py",
     "models/cnn.py",
@@ -19,7 +19,10 @@
     "label_smoothing",
     "gradient_clip",
     "support_pool_crops",
-    "contrastive_loss_weight"
+    "contrastive_loss_weight",
+    "outer_lr_scheduler",
+    "outer_lr_warmup_steps",
+    "outer_lr_min_ratio"
   ],
   "fixed_config": {
     "targets": [
@@ -57,7 +60,7 @@
   "objective": "minimum_test_mouse_mean_log_loss",
   "fixed_sha256": {
     ".gitattributes": "2b17c8aaf1304e32b7bbe27ce552bf623ecc49ae13f5589a85c2cf14a9c94fe5",
-    "AGENTS.md": "f5588c3e09f203e5d443aec59a6bd4210812e53203f8241d634e1911d6b53276",
+    "AGENTS.md": "68777719fd5334e919006efb7ac633756d0bd4362b66430ecce7b0af141ac16a",
     "Dockerfile": "5c6800b3bbcdfb8f22490d017bde0132fa26294fb95e6e7eb227b5c8db32db49",
     "SETTINGS_MouseLFP.json": "284b6dfc1f34a253c68397ebf7e21b6fcc024fad218fb02a357e6a217551bc64",
     "evaluate.py": "c219c12657295af2b451396756db9f343fdbcb0f31d30490b52a8ef843227f5b",
@@ -66,24 +69,24 @@
     "meta_learning/algorithms.py": "eb564c881d7325923704864c304736159f818759f3292d2e59bc313f9db8f79a",
     "meta_learning/cli.py": "87835bad28ccce6e0792a69e3e5799c008dd0587858b828559a00a5ce94cf03a",
     "meta_learning/common.py": "c092352dfda2d5a7d50c8d5e06cb6a5d02efba4d63cc2c9cdeaf651749987a6b",
-    "meta_learning/config.py": "ccda707f6dd7f3bcb842a440151132ed492e453e3db80de930df4acf703edbdd",
+    "meta_learning/config.py": "79f1b616f75fd704e9749c95790eea6b122ca2177f2ceeb558c596153dac25b3",
     "meta_learning/contrastive.py": "f4e874c963907f5a3b9d1081cc66e3e81090fa43a7636cade51ef1d6483e69d3",
     "meta_learning/crops.py": "90bcb634dfdcc32f07fa8323d58c8b5c0673b97c38f3ed3ce81a58a386cb1807",
     "meta_learning/data.py": "7cf47b2ea739f3b550ddd840bead14986ac3cb23df5d088bcf48be88fac73672",
-    "meta_learning/engine.py": "016de2b0de11d7eea596eba4ef0da6014607c81d5637a65a421203c1584f74e4",
+    "meta_learning/engine.py": "54555e39a3e49b74e5fe94822e22876ad544b06134a327a574af928c79c47d2a",
     "meta_learning/episodes.py": "238e0332e93bbd14e387c7a0a1f6ebd067c2fe17d3decd18e6b8404762a1733e",
     "meta_learning/frontend_contract.py": "4210409ca61c29340d80a3c8d3091f7beffa97969b5571c8ce9c41cffd33c581",
     "meta_learning/inner.py": "8b18ba1d619cef22c16fe4a4cea39145d5e96c1ab67db51e6c8b48cd046f01f2",
     "meta_learning/model.py": "4847fbc914308dee0684512d85b369da22b1866e23638725ee193000b9270945",
     "meta_learning/plotting.py": "e807d394a485c9510d6f4de4d1c6e7ad787bf9c083003637d73cb58ad535b7f7",
-    "meta_learning/training_log.py": "83fc1589dfe37ff010d957ee420d71dd316f93a504a7415dc4edd07847ecd819",
+    "meta_learning/training_log.py": "e5c9f367a090afec48a40f4f9413f99a8c9a5c2d0b996e37a3d2cbb7c07afebd",
     "meta_learning/waveform.py": "e600a0e2388493b29fb56a94b4c251e9ddeece87eac875ea68943d5871e068fc",
     "models/__init__.py": "8da65f20eccafa43086b5dc745083332dd432cb3efa522bc5b9177ee14e6c5f3",
     "models/normalization.py": "5b2a40b5c0320737e4fa1587ec9a59a7affa359a11b7c449a448d0f6d1604a31",
     "prepare.py": "1d863d71a76e5644883e7af358bf898f7401a196ade66332f14d167f2d0aa86b",
-    "program.md": "afeb1f0d69831b29f6eb26ea58a03520153e28887f0f91abf4d6822d6a6a2c6c",
+    "program.md": "d93203ea0c6e783b0df721cf47aa65302b7da344be97776edb5d6828b544f2ed",
     "requirements.txt": "ab6364c7b0cbf691af52023d531c391c56099dafbd965d85abd9218deb46db31",
-    "research.py": "0312b3ebae71500520d563237a17c53789238d12b057cb6d40fe3d89388d08fa",
+    "research.py": "258b8818dd42f88aa078d42ac8abc2d42196517acf99486991a25acf2a246637",
     "run_meta.sh": "963f55a719c064559d2b78270e7c620b64ecfbd97271c7338f00caa12622776d",
     "run_research.ps1": "18ecda03df9d8439d912dcb7b4fb996d612a936a018fc914b615688b3c6c4988",
     "run_research.sh": "c7bee1e4e72d72a31c13e99747da282812f61dbed373c5e10d150c575177f0d4",

@@ -74,6 +74,8 @@ def readable_lines(stage, row, total=None):
              if 'task_days' in config else 'Tasks: see the saved run provenance.'),
             f"SGD lr={config['inner_lr']:g}, decay={config['inner_weight_decay']:g} | AdamW lr={config['outer_lr']:g}, decay={config['outer_weight_decay']:g} | dropout={config['classifier_dropout']:g} | support weight={config['support_loss_weight']:g}",
             f"Supervised frontend contrastive weight={config.get('contrastive_loss_weight', 0):g}",
+            (f"Outer LR schedule: {config.get('outer_lr_scheduler', 'none')} | warmup {config.get('outer_lr_warmup_steps', 0)} updates"
+             f" | minimum/base ratio {config.get('outer_lr_min_ratio', 0.1):g}"),
             'Values are accuracy / loss. S=support, Q=query, -> new=independent crop draw.',
             'Sampling: one uniform mouse with replacement per step; unweighted mouse objective.',
             'Task/STEP rows: selected mouse only. EVAL MEAN: equal mean over every configured mouse.',
@@ -103,6 +105,8 @@ def readable_lines(stage, row, total=None):
         summary = f"STEP {row['mice'][0]}" if len(row['mice']) == 1 else 'MEAN'
         lines = [f"{prefix} {summary:<8} | S {metric(support)} -> new {metric(new_support)} | Q {metric(query)} -> new {metric(new_query)}"]
         parts = [f"objective={row['outer_loss']:.4f}"]
+        if 'outer_lr' in row:
+            parts.append(f"outer_lr={row['outer_lr']:.6g}")
         objective = row.get('outer_objective', {})
         if objective.get('contrastive_loss_weight'):
             parts.append(f"contrast={objective['aggregate']['weighted_contrastive_loss']:.4f}")

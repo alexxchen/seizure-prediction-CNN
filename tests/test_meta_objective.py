@@ -142,11 +142,14 @@ class MetaObjectiveTests(unittest.TestCase):
         import research
         root = Path(__file__).resolve().parents[1]
         lock = research.verify_protocol(root)
-        self.assertEqual(lock["version"], 20)
+        self.assertEqual(lock["version"], 21)
         self.assertIn("support_loss_weight", research.EDITABLE_CONFIG_FIELDS)
         self.assertIn("contrastive_loss_weight", research.EDITABLE_CONFIG_FIELDS)
         self.assertNotIn("support_loss_weight", lock["fixed_config"])
         self.assertNotIn("contrastive_loss_weight", lock["fixed_config"])
+        for name in ('outer_lr_scheduler', 'outer_lr_warmup_steps', 'outer_lr_min_ratio'):
+            self.assertIn(name, research.EDITABLE_CONFIG_FIELDS)
+            self.assertNotIn(name, lock['fixed_config'])
         self.assertEqual(lock["fixed_config"]["task_days"], list(range(9)) + [11])
         self.assertEqual(lock["fixed_config"]["query_event_fraction"], 0.2)
         with tempfile.TemporaryDirectory() as directory:
@@ -159,6 +162,9 @@ class MetaObjectiveTests(unittest.TestCase):
             config = json.loads(path.read_text())
             config["support_loss_weight"] = 0.75
             config["contrastive_loss_weight"] = 0.25
+            config['outer_lr_scheduler'] = 'cosine'
+            config['outer_lr_warmup_steps'] = 20
+            config['outer_lr_min_ratio'] = .05
             path.write_text(json.dumps(config))
             research.verify_protocol(target)
             config["query_event_fraction"] = 0.4
